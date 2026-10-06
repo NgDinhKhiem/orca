@@ -7,6 +7,8 @@ import type { BrowserBackend, BrowserBackendCreateTab } from './browser-backend'
 import type { BrowserManager } from './browser-manager'
 import type { AgentBrowserBridge } from './agent-browser-bridge'
 import { browserSessionRegistry } from './browser-session-registry'
+import { BrowserError } from './browser-error'
+import { normalizeBrowserNavigationUrl } from '../../shared/browser-url'
 
 // Why: headless orca serve has no renderer window to host a <webview>, so each
 // browser page is backed by a main-process offscreen BrowserWindow. The window
@@ -37,6 +39,11 @@ export class OffscreenBrowserBackend implements BrowserBackend {
   async createTab(params: BrowserBackendCreateTab): Promise<{ browserPageId: string }> {
     if (this.shutdownStarted) {
       throw new Error('Offscreen browser backend is shutting down')
+    }
+    // Why: runtime RPC hands raw caller URLs here; apply the same scheme allowlist as goto before any window exists.
+    const url = normalizeBrowserNavigationUrl(params.url || 'about:blank')
+    if (!url) {
+      throw new BrowserError('invalid_argument', `Unsupported browser URL: ${params.url}`)
     }
     const browserPageId = params.browserPageId ?? randomUUID()
     if (this.windowsByPageId.has(browserPageId)) {
@@ -103,7 +110,6 @@ export class OffscreenBrowserBackend implements BrowserBackend {
       this.browserManager.unregisterGuest(browserPageId)
     })
 
-    const url = params.url || 'about:blank'
     void this.loadUrl(win, url).catch((error) => {
       console.warn(
         '[offscreen-browser] page load failed:',
