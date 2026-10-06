@@ -34,6 +34,7 @@ type MermaidBlockProps = {
 // become unreachable and can be GC'd. Without this, the chain grows with
 // every MermaidBlock mount/unmount cycle for the lifetime of the renderer.
 let renderQueue: Promise<void> = Promise.resolve()
+const RENDER_DEBOUNCE_MS = 250
 
 function enqueueRender(fn: () => Promise<void>): void {
   renderQueue = renderQueue.then(fn, fn).then(() => {
@@ -54,6 +55,7 @@ export default function MermaidBlock({
 }: MermaidBlockProps): React.JSX.Element {
   const id = useId().replace(/:/g, '_')
   const containerRef = useRef<HTMLDivElement>(null)
+  const hasScheduledRenderRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -83,6 +85,7 @@ export default function MermaidBlock({
         }
       } catch (err) {
         if (!cancelled) {
+          containerRef.current?.replaceChildren()
           setError(err instanceof Error ? err.message : 'Invalid mermaid syntax')
           // Mermaid leaves an error element in the DOM on failure — clean it up.
           const errorEl = document.getElementById(`d${`mermaid-${id}`}`)
@@ -91,26 +94,33 @@ export default function MermaidBlock({
       }
     }
 
+    // Why: streamed markdown changes a diagram many times a second and partial
+    // sources fail to parse; render the first time at once, then only once edits settle.
+    const delay = hasScheduledRenderRef.current ? RENDER_DEBOUNCE_MS : 0
+    hasScheduledRenderRef.current = true
     // Serialize render calls through a module-level queue to avoid race
     // conditions from concurrent mermaid.render() invocations.
-    enqueueRender(render)
+    const timer = setTimeout(() => enqueueRender(render), delay)
     return () => {
       cancelled = true
+      clearTimeout(timer)
     }
   }, [content, htmlLabels, isDark, id])
 
-  if (error) {
-    return (
-      <div className="mermaid-block">
-        <div className="mermaid-error">
-          {translate('auto.components.editor.MermaidBlock.dcc132e691', 'Diagram error:')} {error}
-        </div>
-        <pre>
-          <code>{content}</code>
-        </pre>
-      </div>
-    )
-  }
-
-  return <div className="mermaid-block" ref={containerRef} />
+  return (
+    <div className="mermaid-block">
+      {error ? (
+        <>
+          <div className="mermaid-error">
+            {translate('auto.components.editor.MermaidBlock.dcc132e691', 'Diagram error:')} {error}
+          </div>
+          <pre>
+            <code>{content}</code>
+          </pre>
+        </>
+      ) : null}
+      {/* Why: stays mounted through errors so a later valid source has somewhere to render. */}
+      <div ref={containerRef} hidden={error !== null} />
+    </div>
+  )
 }
