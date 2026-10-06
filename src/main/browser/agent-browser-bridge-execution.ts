@@ -91,8 +91,9 @@ export abstract class AgentBrowserBridgeExecution extends AgentBrowserBridgeTabs
       commandArgs[0] === 'network' && (commandArgs[1] === 'route' || commandArgs[1] === 'unroute')
 
     const needsInit = !session.initialized
-    // Why: a restarted named daemon auto-launches Chrome unless every invocation reasserts Orca's CDP owner.
-    args.push('--cdp', String(session.proxy.getPort()))
+    // Why: a restarted named daemon auto-launches Chrome unless every invocation reasserts Orca's CDP owner;
+    // pass the secret ws URL because the proxy refuses port-only /json discovery.
+    args.push('--cdp', session.cdpEndpoint)
 
     // Why: exec passthrough can produce a large argv; spreading into push risks V8 argument limits.
     for (const commandArg of commandArgs) {
@@ -128,7 +129,7 @@ export abstract class AgentBrowserBridgeExecution extends AgentBrowserBridgeTabs
             '--session',
             sessionName,
             '--cdp',
-            String(session.proxy.getPort()),
+            session.cdpEndpoint,
             'network',
             'route',
             urlPattern,

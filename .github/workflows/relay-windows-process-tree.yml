@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
@@ -31,12 +31,12 @@ jobs:
       # Plain setup rather than a composite action: `uses: ./` resolves from the
       # checked-out ref, which may be a release tag that predates the action.
       - name: Setup pnpm
-        uses: pnpm/setup@v2
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
         with:
           install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: package.json
           cache: pnpm
@@ -45,7 +45,7 @@ jobs:
       # Why host-only: the addon is compiled from the patched source pnpm
       # materializes, and arm64 cross-compiles through node-gyp --arch.
       - name: Install dependencies
-        uses: nick-fields/retry@v4
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
           timeout_minutes: 10
           max_attempts: 3
@@ -61,7 +61,7 @@ jobs:
           node config/scripts/build-windows-process-tree-relay-addon.mjs --arch=arm64
 
       - name: Upload relay addons
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: relay-windows-process-tree
           path: .build/windows-process-tree/

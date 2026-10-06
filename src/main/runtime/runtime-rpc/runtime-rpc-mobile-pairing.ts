@@ -90,7 +90,11 @@ export class RuntimeRpcMobilePairing extends RuntimeRpcPairing {
     const switchingPendingMode =
       pending != null &&
       this.deviceRegistry?.getMobilePairingConnectionMode(pending.deviceId) !== connectionMode
-    if (args.rotate || switchingPendingMode) {
+    // Why: an expired pending token is replaced anyway; rotating here queues its Relay revoke first.
+    const pendingExpired =
+      pending != null && this.deviceRegistry?.isPendingDeviceExpired(pending) === true
+    const rotatePending = args.rotate || switchingPendingMode || pendingExpired
+    if (rotatePending) {
       if (pending?.relayBinding) {
         // Why: record the durable cloud revoke before rotating the local token so an old relay invite can't outlive the QR.
         if (!this.queueRelayDeviceRevoke(pending.relayBinding)) {
@@ -103,7 +107,7 @@ export class RuntimeRpcMobilePairing extends RuntimeRpcPairing {
     }
     const direct = this.createPairingOffer({
       ...args,
-      rotate: args.rotate || switchingPendingMode,
+      rotate: rotatePending,
       scope: 'mobile'
     })
     if (!direct.available) {

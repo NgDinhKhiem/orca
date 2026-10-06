@@ -5,12 +5,25 @@ import { IpynbCellOutputs } from './IpynbCellOutputs'
 import { IpynbCellSource, IpynbMarkdownCell } from './IpynbCellEditor'
 import { IpynbRunPrompt } from './IpynbCellToolbar'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import type * as IpynbAnsi from './ipynb-ansi'
 import type { IpynbCell, IpynbOutput } from './ipynb-parse'
 
 vi.mock('@/i18n/i18n', () => ({
   i18n: { language: 'en' },
-  translate: (_key: string, fallback: string) => fallback
+  translate: (_key: string, fallback: string, values?: Record<string, unknown>) =>
+    fallback.replace(/{{(\w+)}}/g, (_match, name: string) => String(values?.[name]))
 }))
+const ansiParses = vi.hoisted(() => ({ count: 0 }))
+vi.mock('./ipynb-ansi', async (importOriginal) => {
+  const original = await importOriginal<typeof IpynbAnsi>()
+  return {
+    ...original,
+    parseAnsiSegments: (input: string) => {
+      ansiParses.count += 1
+      return original.parseAnsiSegments(input)
+    }
+  }
+})
 vi.mock('@/hooks/use-document-dark-theme', () => ({ useDocumentDarkTheme: () => true }))
 vi.mock('@/lib/monaco-setup', () => ({ monaco: {} }))
 vi.mock('./MonacoCodeExcerpt', () => ({
@@ -154,6 +167,30 @@ describe('notebook outputs', () => {
     expect(name.tagName).toBe('SPAN')
     expect(name.style.color).not.toBe('')
     expect(document.body.textContent).not.toContain('\u001b')
+  })
+
+  it('renders only the last 5000 lines of a long stream, with a truncation notice', () => {
+    const text = Array.from({ length: 6_000 }, (_, index) => `line ${index}\n`).join('')
+    render(
+      <IpynbCellOutputs cell={cell('code', 'spam', [{ kind: 'stream', name: 'stdout', text }])} />
+    )
+    const rendered = document.querySelector('pre')?.textContent ?? ''
+    expect(rendered.startsWith('line 1000\n')).toBe(true)
+    expect(rendered.endsWith('line 5999\n')).toBe(true)
+    expect(screen.getByText('1000 earlier lines truncated')).toBeTruthy()
+  })
+
+  it('does not re-parse ANSI text that has not changed', () => {
+    const stdout: IpynbOutput = { kind: 'stream', name: 'stdout', text: 'stable\n' }
+    const { rerender } = render(<IpynbCellOutputs cell={cell('code', 'x', [stdout])} />)
+    const parsesAfterMount = ansiParses.count
+    // A fresh output object with the same text, as each streamed frame produces.
+    rerender(
+      <IpynbCellOutputs
+        cell={cell('code', 'x', [{ ...stdout }, { kind: 'stream', name: 'stderr', text: 'new\n' }])}
+      />
+    )
+    expect(ansiParses.count - parsesAfterMount).toBe(1)
   })
 
   it('sandboxes HTML output behind a no-network CSP and strips scripts', () => {

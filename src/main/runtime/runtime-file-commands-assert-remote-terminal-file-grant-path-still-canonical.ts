@@ -20,7 +20,7 @@ import { readdir, stat } from 'node:fs/promises'
 import type { DirEntry, FsChangeEvent } from '../../shared/filesystem-entry-types'
 import { sortDirEntries } from '../../shared/file-name-sort'
 import { resolveAuthorizedPath } from '../ipc/filesystem-auth'
-import { watchWindowsRuntimeFileExplorer } from './runtime-file-command-host'
+import { watchWindowsRuntimeFileExplorer } from './windows-runtime-file-explorer-watch'
 import { beginWatcherInstall } from '../ipc/watcher-removal-gate'
 import {
   armSshFileExplorerWatchRearm,

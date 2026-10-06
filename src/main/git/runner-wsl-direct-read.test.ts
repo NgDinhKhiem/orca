@@ -17,6 +17,7 @@ vi.mock('../observability/instrumentation', () => ({
 }))
 vi.mock('../diagnostics/main-thread-churn-probe', () => ({ recordSubprocessSpawn: vi.fn() }))
 
+import { GIT_FSMONITOR_DISABLED_ARGS } from '../../shared/git-repo-config-command-guard'
 import { getBranchConflictKind } from './repo-branch-conflict'
 import { pendingWslDirectGitReadEnvironment } from './command-runner/git-command-resolution'
 import { gitExecFileAsync, gitExecFileAsyncBuffer, gitSpawn, gitStreamStdout } from './runner'
@@ -28,7 +29,6 @@ import {
 import {
   disableWslGitReadEnvironment,
   getWslGitReadEnvironment,
-  peekWslGitReadEnvironment,
   resetWslGitReadEnvironmentForTests,
   seedWslGitReadEnvironmentForTests,
   WSL_GIT_READ_ENVIRONMENT_WAIT_MS
@@ -168,14 +168,6 @@ describe('WSL direct Git reads', () => {
     }
   })
 
-  it('bounds settled environment entries during distro churn', () => {
-    for (let index = 0; index < 132; index += 1) {
-      seedWslGitReadEnvironmentForTests(`distro-${index}`, LOGIN_ENVIRONMENT)
-    }
-    expect(peekWslGitReadEnvironment('distro-0')).toBeUndefined()
-    expect(peekWslGitReadEnvironment('distro-131')).toEqual(LOGIN_ENVIRONMENT)
-  })
-
   it('runs an opted-in read directly with translated cwd and arguments', async () => {
     await withPlatform('win32', async () => {
       seedWslGitReadEnvironmentForTests(DISTRO, LOGIN_ENVIRONMENT)
@@ -203,6 +195,7 @@ describe('WSL direct Git reads', () => {
         LOGIN_ENVIRONMENT.gitPath,
         '-C',
         '/mnt/c/repo',
+        ...GIT_FSMONITOR_DISABLED_ARGS,
         'status',
         '--short',
         '/mnt/c/repo/file.txt'

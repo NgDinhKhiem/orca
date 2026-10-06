@@ -64,8 +64,21 @@ describe('deciding what to do with a presented host key', () => {
     expect(decision.reason).toContain('remove the saved key')
   })
 
-  it('remembers a first-contact key', () => {
-    expect(decideHostKey(input()).action).toBe('accept-and-remember')
+  // OpenSSH's default (`ask`) shows the fingerprint and waits for a yes before trusting a new host.
+  it('asks before trusting a first-contact key under the default policy', () => {
+    const decision = decideHostKey(input())
+    expect(decision.action).toBe('prompt')
+    expect(decision.rememberOnConfirm).toBe(true)
+  })
+
+  it('asks before trusting a first-contact key when no policy was resolved', () => {
+    expect(decideHostKey(input({ strictHostKeyChecking: '' })).action).toBe('prompt')
+  })
+
+  it('remembers a first-contact key silently under accept-new', () => {
+    expect(decideHostKey(input({ strictHostKeyChecking: 'accept-new' })).action).toBe(
+      'accept-and-remember'
+    )
   })
 
   describe('rejections', () => {
@@ -177,7 +190,7 @@ describe('deciding what to do with a presented host key', () => {
     // variable, unreachable when Orca is launched from the Dock.
     it('does not refuse a certificate-authority host', () => {
       const decision = decideHostKey(input({ knownHostsOutcome: 'ca-only' }))
-      expect(decision.action).toBe('accept-and-remember')
+      expect(decision.action).toBe('prompt')
     })
 
     // The residual risk is accepted, not hidden: we take a plain key we cannot tie to the CA. The
@@ -244,14 +257,12 @@ describe('deciding what to do with a presented host key', () => {
       }
     )
 
-    // Phase 1 has no dialog, so `ask` behaves as `accept-new` — deliberate, and the reason the
-    // whole defence can ship without a modal. This pins the equivalence so Phase 2 has to break it
-    // ON PURPOSE: `accept-new` must still not prompt, `ask` must.
-    it('treats accept-new and ask alike while no dialog exists', () => {
+    // `accept-new` trusts silently; `ask` must ask, as OpenSSH does.
+    it('prompts under ask but not under accept-new', () => {
       const acceptNew = decideHostKey(input({ strictHostKeyChecking: 'accept-new' }))
       const ask = decideHostKey(input({ strictHostKeyChecking: 'ask' }))
       expect(acceptNew.action).toBe('accept-and-remember')
-      expect(ask.action).toBe(acceptNew.action)
+      expect(ask.action).toBe('prompt')
     })
 
     // accept-new is a real OpenSSH value, not a typo — it must never fall into the strict branch.
@@ -262,9 +273,7 @@ describe('deciding what to do with a presented host key', () => {
     })
 
     it('treats an unrecognised value as ask', () => {
-      expect(decideHostKey(input({ strictHostKeyChecking: 'banana' })).action).toBe(
-        'accept-and-remember'
-      )
+      expect(decideHostKey(input({ strictHostKeyChecking: 'banana' })).action).toBe('prompt')
     })
 
     it('is case-insensitive', () => {
@@ -277,14 +286,18 @@ describe('deciding what to do with a presented host key', () => {
   // placeholder — while blaming a config file that is fine. We connect as ssh does, but write
   // nothing, so a first contact we could not check never becomes durable trust.
   describe('an unreadable known_hosts file', () => {
-    it('connects rather than refusing', () => {
-      expect(decideHostKey(input({ knownHostsUnreadable: true })).action).toBe('accept')
+    it('connects without asking under a policy that would not ask', () => {
+      expect(
+        decideHostKey(input({ knownHostsUnreadable: true, strictHostKeyChecking: 'accept-new' }))
+          .action
+      ).toBe('accept')
     })
 
-    it('does not record what it could not verify', () => {
-      expect(decideHostKey(input({ knownHostsUnreadable: true })).action).not.toBe(
-        'accept-and-remember'
-      )
+    // ssh still asks under `ask`; a confirmed key is used for this connection but not recorded.
+    it('asks under ask but does not record what it could not verify', () => {
+      const decision = decideHostKey(input({ knownHostsUnreadable: true }))
+      expect(decision.action).toBe('prompt')
+      expect(decision.rememberOnConfirm).toBe(false)
     })
 
     // The file we could not read cannot excuse a key that a source we COULD read says has changed.
@@ -372,23 +385,23 @@ describe('deciding what to do with a presented host key', () => {
     })
   })
 
-  // Phase 1 ships no dialog at all: startup restore opens many connections at once, ephemeral
-  // targets would prompt every launch, and paired-web connects run on someone else's desktop.
-  it('never asks for a prompt', () => {
+  // Only an unknown host under `ask` may prompt: known, changed and revoked keys never ask, and
+  // ephemeral targets would otherwise prompt on every launch.
+  it('asks only about an unknown host under ask', () => {
     const cases: Partial<HostKeyDecisionInput>[] = [
-      {},
       { knownHostsOutcome: 'match' },
       { knownHostsOutcome: 'mismatch' },
       { knownHostsOutcome: 'revoked' },
-      { knownHostsOutcome: 'ca-only' },
+      { knownHostsOutcome: 'ca-only', strictHostKeyChecking: 'accept-new' },
       { knownHostsOutcome: 'unknown-type-known-host' },
       { storeOutcome: 'match' },
       { storeOutcome: 'mismatch' },
       { strictHostKeyChecking: 'yes' },
       { strictHostKeyChecking: 'no' },
+      { strictHostKeyChecking: 'accept-new' },
       { isEphemeralRuntimeTarget: true },
       { siteConfigSuppressed: true },
-      { knownHostsUnreadable: true }
+      { knownHostsUnreadable: true, strictHostKeyChecking: 'accept-new' }
     ]
     for (const overrides of cases) {
       expect(decideHostKey(input(overrides)).action).not.toBe('prompt')

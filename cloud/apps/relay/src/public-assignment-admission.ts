@@ -1,5 +1,15 @@
 type AssignmentAdmissionLease = { release(): void }
 type CancelWait = () => void
+// Anonymous until its caller authenticates; only then does it carry a host.
+type ReservedPermit = AssignmentAdmissionLease & { bind(relayHostId: string): void }
+type ReservedWaiter = {
+  resolve: (permit: ReservedPermit | null) => void
+  cancelWait: CancelWait
+}
+export type ReservedAdmission<T> =
+  | { status: 'granted'; lease: AssignmentAdmissionLease; credential: T }
+  | { status: 'rejected' }
+  | { status: 'unauthenticated' }
 // Per-call sink: acquire() keeps returning null so callers stay unchanged, and the
 // reason rides out of band to whoever made this particular request.
 type RejectionSink = (reason: AssignmentAdmissionRejection) => void
@@ -22,7 +32,7 @@ export type AssignmentAdmissionRejection =
 
 const MAX_TRACKED_HOSTS = 4_096
 
-type LeaseKind = 'placement' | 'reserved' | 'drain-return'
+type LeaseKind = 'placement' | 'drain-return'
 
 export class RelayPublicAssignmentAdmission {
   private active = 0
@@ -38,7 +48,8 @@ export class RelayPublicAssignmentAdmission {
   private readonly lastAttemptByHost = new Map<string, number>()
   private readonly lastReservedAttemptByHost = new Map<string, number>()
   private readonly pendingAssignments: PendingAssignment[] = []
-  private pendingReserved: PendingAssignment | undefined
+  private pendingReserved: ReservedWaiter | undefined
+  private readonly placementReleaseWaiters = new Map<string, () => void>()
 
   constructor(
     private readonly options: {
@@ -125,8 +136,7 @@ export class RelayPublicAssignmentAdmission {
     if (
       this.activeAssignmentHosts.has(relayHostId) ||
       this.activeReservedHosts.has(relayHostId) ||
-      this.queuedAssignmentHosts.has(relayHostId) ||
-      this.pendingReserved?.relayHostId === relayHostId
+      this.queuedAssignmentHosts.has(relayHostId)
     ) {
       return this.reject('host-in-flight', notifyRejected)
     }
@@ -167,45 +177,56 @@ export class RelayPublicAssignmentAdmission {
     })
   }
 
-  async acquireReserved(
+  // The credential check runs under an anonymous permit: its lookup stays inside the
+  // director's database budget, yet a caller that fails it never cancels the host's
+  // queued placement, starts its retry clock, or marks it in flight.
+  async acquireReserved<T>(
     relayHostId: string,
+    authenticate: () => Promise<T | null>,
     notifyRejected?: RejectionSink
-  ): Promise<AssignmentAdmissionLease | null> {
+  ): Promise<ReservedAdmission<T>> {
     const maxReservedConcurrent = this.options.maxReservedConcurrent ?? 0
-    const now = (this.options.now ?? Date.now)()
     const lastAttempt = this.lastReservedAttemptByHost.get(relayHostId)
     if (maxReservedConcurrent === 0 || this.activeReserved >= maxReservedConcurrent) {
-      return this.reject('reserved-unavailable', notifyRejected)
+      return this.rejectReserved('reserved-unavailable', notifyRejected)
     }
     if (this.activeReservedHosts.has(relayHostId)) {
-      return this.reject('host-in-flight', notifyRejected)
+      return this.rejectReserved('host-in-flight', notifyRejected)
     }
     if (this.pendingReserved !== undefined) {
-      return this.reject('reserved-unavailable', notifyRejected)
+      return this.rejectReserved('reserved-unavailable', notifyRejected)
     }
-    if (lastAttempt !== undefined && now - lastAttempt < this.options.minIntervalMs) {
-      return this.reject('host-rate-limited', notifyRejected)
+    if (lastAttempt !== undefined && this.now() - lastAttempt < this.options.minIntervalMs) {
+      return this.rejectReserved('host-rate-limited', notifyRejected)
     }
-    this.cancelQueuedAssignment(relayHostId)
-    if (
-      this.active < this.options.maxConcurrent &&
-      !this.activeAssignmentHosts.has(relayHostId)
-    ) {
-      this.recordAttempt(this.lastReservedAttemptByHost, relayHostId, now)
-      return this.createLease(relayHostId, 'reserved')
+    const permit = await this.acquireReservedPermit(notifyRejected)
+    if (!permit) return { status: 'rejected' }
+    let credential: T | null
+    try {
+      credential = await authenticate()
+    } catch (error) {
+      permit.release()
+      throw error
     }
+    if (credential === null) {
+      permit.release()
+      return { status: 'unauthenticated' }
+    }
+    const lease = await this.bindReserved(relayHostId, permit, notifyRejected)
+    return lease ? { status: 'granted', lease, credential } : { status: 'rejected' }
+  }
 
+  private async acquireReservedPermit(
+    notifyRejected?: RejectionSink
+  ): Promise<ReservedPermit | null> {
+    if (this.active < this.options.maxConcurrent) return this.createReservedPermit()
     return await new Promise((resolve) => {
       const schedule = this.options.schedule ?? defaultSchedule
       let cancelWait: CancelWait = () => undefined
-      this.pendingReserved = {
-        relayHostId,
-        resolve,
-        cancelWait: () => cancelWait(),
-        notifyRejected
-      }
+      const waiter: ReservedWaiter = { resolve, cancelWait: () => cancelWait() }
+      this.pendingReserved = waiter
       cancelWait = schedule(() => {
-        if (this.pendingReserved?.relayHostId !== relayHostId) return
+        if (this.pendingReserved !== waiter) return
         this.pendingReserved = undefined
         resolve(this.reject('wait-timeout', notifyRejected))
         this.grantPendingAssignments()
@@ -214,12 +235,89 @@ export class RelayPublicAssignmentAdmission {
     })
   }
 
+  private async bindReserved(
+    relayHostId: string,
+    permit: ReservedPermit,
+    notifyRejected?: RejectionSink
+  ): Promise<AssignmentAdmissionLease | null> {
+    // Rechecked: another authenticated caller for this host may have bound meanwhile.
+    if (this.activeReservedHosts.has(relayHostId)) {
+      permit.release()
+      return this.reject('host-in-flight', notifyRejected)
+    }
+    const now = this.now()
+    const lastAttempt = this.lastReservedAttemptByHost.get(relayHostId)
+    if (lastAttempt !== undefined && now - lastAttempt < this.options.minIntervalMs) {
+      permit.release()
+      return this.reject('host-rate-limited', notifyRejected)
+    }
+    this.recordAttempt(this.lastReservedAttemptByHost, relayHostId, now)
+    permit.bind(relayHostId)
+    this.cancelQueuedAssignment(relayHostId)
+    // Same-host placement and recovery stay serialized; holding the permit keeps recovery's priority.
+    if (
+      this.activeAssignmentHosts.has(relayHostId) &&
+      !(await this.awaitPlacementRelease(relayHostId))
+    ) {
+      permit.release()
+      return this.reject('wait-timeout', notifyRejected)
+    }
+    return permit
+  }
+
+  private async awaitPlacementRelease(relayHostId: string): Promise<boolean> {
+    return await new Promise((resolve) => {
+      const schedule = this.options.schedule ?? defaultSchedule
+      const cancelWait = schedule(() => {
+        this.placementReleaseWaiters.delete(relayHostId)
+        resolve(false)
+      }, this.options.reservedWaitMs ?? 1_000)
+      this.placementReleaseWaiters.set(relayHostId, () => {
+        this.placementReleaseWaiters.delete(relayHostId)
+        cancelWait()
+        resolve(true)
+      })
+    })
+  }
+
+  private createReservedPermit(): ReservedPermit {
+    this.active++
+    this.activeReserved++
+    let boundHost: string | undefined
+    let released = false
+    return {
+      bind: (relayHostId) => {
+        boundHost = relayHostId
+        this.activeReservedHosts.add(relayHostId)
+      },
+      release: () => {
+        if (released) return
+        released = true
+        this.active = Math.max(0, this.active - 1)
+        this.activeReserved = Math.max(0, this.activeReserved - 1)
+        if (boundHost !== undefined) this.activeReservedHosts.delete(boundHost)
+        this.grantPendingReserved()
+        this.grantPendingAssignments()
+        this.grantPendingDrainReturns()
+      }
+    }
+  }
+
+  private rejectReserved(
+    reason: AssignmentAdmissionRejection,
+    notifyRejected?: RejectionSink
+  ): ReservedAdmission<never> {
+    this.reject(reason, notifyRejected)
+    return { status: 'rejected' }
+  }
+
+  private now(): number {
+    return (this.options.now ?? Date.now)()
+  }
+
   private createLease(relayHostId: string, kind: LeaseKind): AssignmentAdmissionLease {
     this.active++
-    if (kind === 'reserved') {
-      this.activeReserved++
-      this.activeReservedHosts.add(relayHostId)
-    } else if (kind === 'drain-return') {
+    if (kind === 'drain-return') {
       this.activeDrainReturn++
       this.activeDrainReturnHosts.add(relayHostId)
     } else {
@@ -231,14 +329,12 @@ export class RelayPublicAssignmentAdmission {
         if (released) return
         released = true
         this.active = Math.max(0, this.active - 1)
-        if (kind === 'reserved') {
-          this.activeReserved = Math.max(0, this.activeReserved - 1)
-          this.activeReservedHosts.delete(relayHostId)
-        } else if (kind === 'drain-return') {
+        if (kind === 'drain-return') {
           this.activeDrainReturn = Math.max(0, this.activeDrainReturn - 1)
           this.activeDrainReturnHosts.delete(relayHostId)
         } else {
           this.activeAssignmentHosts.delete(relayHostId)
+          this.placementReleaseWaiters.get(relayHostId)?.()
         }
         this.grantPendingReserved()
         this.grantPendingAssignments()
@@ -272,21 +368,10 @@ export class RelayPublicAssignmentAdmission {
 
   private grantPendingReserved(): void {
     const pending = this.pendingReserved
-    if (
-      !pending ||
-      this.active >= this.options.maxConcurrent ||
-      this.activeAssignmentHosts.has(pending.relayHostId)
-    ) {
-      return
-    }
+    if (!pending || this.active >= this.options.maxConcurrent) return
     this.pendingReserved = undefined
     pending.cancelWait()
-    this.recordAttempt(
-      this.lastReservedAttemptByHost,
-      pending.relayHostId,
-      (this.options.now ?? Date.now)()
-    )
-    pending.resolve(this.createLease(pending.relayHostId, 'reserved'))
+    pending.resolve(this.createReservedPermit())
   }
 
   private grantPendingAssignments(): void {

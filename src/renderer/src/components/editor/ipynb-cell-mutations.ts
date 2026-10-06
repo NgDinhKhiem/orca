@@ -1,5 +1,10 @@
 import { createBrowserUuid } from '@/lib/browser-uuid'
-import { isRecord, type IpynbCellKind } from './ipynb-parse'
+import {
+  concatIpynbMultilineString,
+  isRecord,
+  type IpynbCellKind,
+  type ParsedIpynb
+} from './ipynb-parse'
 
 function splitIpynbSource(source: string): string[] {
   if (!source) {
@@ -53,14 +58,38 @@ export function updateIpynbCellSources(
   content: string,
   updates: { index: number; source: string }[]
 ): string {
+  return updateIpynbCellSourcesWithParse(content, updates, null).content
+}
+
+/**
+ * `updateIpynbCellSources`, plus the new content's parse derived from `previous` (the parse of
+ * `content`); null when there is no `previous` or raw cells do not map one-to-one onto it.
+ */
+export function updateIpynbCellSourcesWithParse(
+  content: string,
+  updates: { index: number; source: string }[],
+  previous: ParsedIpynb | null
+): { content: string; notebook: ParsedIpynb | null } {
   if (updates.length === 0) {
-    return content
+    return { content, notebook: previous }
   }
   const root = parseNotebookRoot(content)
+  const sources = new Map<number, string[]>()
   for (const update of updates) {
-    ensureCell(root, update.index).source = splitIpynbSource(update.source)
+    const lines = splitIpynbSource(update.source)
+    ensureCell(root, update.index).source = lines
+    sources.set(update.index, lines)
   }
-  return serializeNotebook(root)
+  const nextContent = serializeNotebook(root)
+  // Parsing drops unknown cell types, which would shift indexes between raw and parsed cells.
+  if (!previous || !Array.isArray(root.cells) || root.cells.length !== previous.cells.length) {
+    return { content: nextContent, notebook: null }
+  }
+  const cells = previous.cells.map((cell, index) => {
+    const lines = sources.get(index)
+    return lines ? { ...cell, source: concatIpynbMultilineString(lines) } : cell
+  })
+  return { content: nextContent, notebook: { ...previous, cells } }
 }
 
 export function updateIpynbCellKind(

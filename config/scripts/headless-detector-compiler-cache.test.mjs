@@ -156,10 +156,10 @@ it('uses exact optional restores, seeds only main and retains full dependency fa
   const action = parse(readFileSync('.github/actions/prepare-headless-compiler/action.yml', 'utf8'))
   const steps = action.runs.steps
   const restore = steps.find((step) => step.id === 'cache')
-  expect(restore.uses).toBe('actions/cache/restore@v5')
+  expect(restore.uses).toMatch(/^actions\/cache\/restore@[0-9a-f]{40}$/)
   expect(restore['continue-on-error']).toBe(true)
   expect(restore.with['restore-keys']).toBeUndefined()
-  const save = steps.find((step) => step.uses === 'actions/cache/save@v5')
+  const save = steps.find((step) => step.uses?.startsWith('actions/cache/save@'))
   expect(save.if).toContain("github.ref == 'refs/heads/main'")
   expect(save.if).toContain("github.event_name != 'pull_request'")
   expect(save['continue-on-error']).toBe(true)

@@ -96,7 +96,11 @@ function createConnection(fixture: Fixture): SshConnection {
     identityFile: fixture.identityFile,
     identitiesOnly: true
   }
-  return new SshConnection(target, { onStateChange: vi.fn() })
+  // Why confirmed: a freshly built test container has an unknown host key under the default `ask`.
+  return new SshConnection(target, {
+    onStateChange: vi.fn(),
+    onHostKeyConfirmRequest: async () => 'confirmed'
+  })
 }
 
 async function waitFor(check: () => boolean, timeoutMs: number): Promise<number> {

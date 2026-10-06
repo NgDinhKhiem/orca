@@ -25,19 +25,21 @@ import {
   requiredRemoteCliString,
   resolveRemoteCliHandle
 } from './ssh-remote-cli-args'
-import { buildRemoteCliError } from './ssh-remote-cli-error-response'
+import { buildRemoteCliError, refusedRemoteCliResult } from './ssh-remote-cli-error-response'
 import { getRemoteLinearHelp, tryDispatchRemoteLinearCli } from './ssh-remote-linear-cli'
 import {
   getRemoteOrchestrationPayload,
   resolveRemoteOrchestrationSender
 } from './ssh-remote-orchestration-send'
 import { formatInProcessRemoteCliResult } from './ssh-remote-cli-in-process-result'
+import { evaluateSshCliBridgeRequest } from './ssh-remote-cli-command-policy'
+import { listCallerSshHostTerminals } from './ssh-remote-cli-terminal-scope'
 
 export type { RemoteOrcaCliRequest, RemoteOrcaCliResult } from './ssh-remote-cli-host-passthrough'
 
 // Why: these commands run a foreground/interactive process attached to the
 // caller's TTY (or a local tmux pane), which a buffered one-shot relay bridge
-// cannot host. Everything else routes through the full host CLI.
+// cannot host. Checked ahead of the SSH allowlist for their more specific message.
 const HOST_INTERACTIVE_COMMANDS: Record<string, string> = {
   serve:
     'orca serve starts a foreground headless Orca server and cannot run through the SSH relay bridge. Run it directly on the machine that should host Orca.',
@@ -51,25 +53,27 @@ const HOST_INTERACTIVE_COMMANDS: Record<string, string> = {
 
 export async function runRemoteOrcaCli(
   runtime: OrcaRuntimeService,
-  request: RemoteOrcaCliRequest,
+  remoteRequest: RemoteOrcaCliRequest,
   passthroughOptions?: HostCliPassthroughOptions
 ): Promise<RemoteOrcaCliResult> {
-  const parsed = parseRemoteCliArgs(request.argv)
-  const json = parsed.flags.has('json')
-  const command = parsed.commandPath.join(' ')
-
+  const remoteParsed = parseRemoteCliArgs(remoteRequest.argv)
+  const json = remoteParsed.flags.has('json')
   const interactiveMessage =
-    HOST_INTERACTIVE_COMMANDS[command] ?? HOST_INTERACTIVE_COMMANDS[parsed.commandPath[0] ?? '']
-  if (interactiveMessage && !parsed.flags.has('help')) {
-    if (json) {
-      return {
-        stdout: `${JSON.stringify(buildRemoteCliError(interactiveMessage, 'unsupported_over_ssh'), null, 2)}\n`,
-        stderr: '',
-        exitCode: 1
-      }
-    }
-    return { stdout: '', stderr: `${interactiveMessage}\n`, exitCode: 1 }
+    HOST_INTERACTIVE_COMMANDS[remoteParsed.commandPath.join(' ')] ??
+    HOST_INTERACTIVE_COMMANDS[remoteParsed.commandPath[0] ?? '']
+  if (interactiveMessage && !remoteParsed.flags.has('help')) {
+    return refusedRemoteCliResult(interactiveMessage, json)
   }
+
+  // Why: an SSH host is a less-trusted principal than the local user; both bridges below run only
+  // the canonical argv this policy checked.
+  const policy = evaluateSshCliBridgeRequest(remoteRequest.argv)
+  if (!policy.allowed) {
+    return refusedRemoteCliResult(policy.message, json, policy.code)
+  }
+  const request: RemoteOrcaCliRequest = { ...remoteRequest, argv: policy.argv }
+  const parsed = parseRemoteCliArgs(policy.argv)
+  const command = parsed.commandPath.join(' ')
 
   if (command === 'orchestration check' || command === 'orchestration ask') {
     // Why: compatibility ACKs must wait until relay stdout is observable; a host CLI child can only flush into main's capture pipe.
@@ -79,6 +83,15 @@ export async function runRemoteOrcaCli(
       parsed,
       json,
       new HostCliUnavailableError('output-ordered orchestration bridge required')
+    )
+  }
+  if (policy.scope === 'caller-ssh-host') {
+    return await runLegacyRemoteOrcaCli(
+      runtime,
+      request,
+      parsed,
+      json,
+      new HostCliUnavailableError('caller-scoped listing runs in-process')
     )
   }
 
@@ -195,13 +208,9 @@ async function dispatchRemoteCli(
       return { ...response, result: cliStatus }
     }
     case 'terminal list':
-      return await call(dispatcher, 'terminal.list', {
-        worktree: optionalRemoteCliString(parsed.flags, 'worktree'),
-        limit: optionalRemoteCliNumber(parsed.flags, 'limit'),
-        // Why: agent JSON calls dominate; topology stays available through an explicit opt-in.
-        includeVisualLayouts:
-          !parsed.flags.has('json') || parsed.flags.has('include-visual-layouts')
-      })
+      return await listCallerSshHostTerminals(parsed, runtimeAuthority, (params) =>
+        call(dispatcher, 'terminal.list', params)
+      )
     case 'orchestration send': {
       const type = optionalRemoteCliString(parsed.flags, 'type')
       return await call(

@@ -45,6 +45,8 @@ export type RuntimeManagedWorktreeCreateArgs = {
   runHooks?: boolean
   activate?: boolean
   setupDecision?: 'run' | 'skip' | 'inherit'
+  /** Setup trust the creating client holds; see CreateWorktreeArgs.setupTrust. */
+  setupTrust?: CreateWorktreeArgs['setupTrust']
   awaitTerminalProvisioning?: boolean
   observeSetupCompletion?: boolean
   createdWithAgent?: TuiAgent

@@ -3,8 +3,10 @@ import { LOCAL_EXECUTION_HOST_ID, parseExecutionHostId } from '../../../shared/e
 import { isTerminalLeafId } from '../../../shared/stable-pane-id'
 import type { WorkspaceSessionState } from '../../../shared/workspace-session-state-types'
 import { rollbackFailedPtyBinding } from './pty-binding-write-rollback'
-import { cloneWorkspaceSessionState } from '../restoring-sessions/session-owner-fields'
-import { rollbackWorkspaceSessionAfterFailedAsyncWrite } from '../restoring-sessions/workspace-session-write-rollback'
+import {
+  snapshotWorkspaceSessionWrite,
+  stageWorkspaceSessionRollback
+} from '../restoring-sessions/workspace-session-write-snapshot'
 import { clearReplacedPaneBinding } from './replaced-pane-binding'
 
 import type { PtyBindingSourceExpectation } from './store'
@@ -102,22 +104,13 @@ export class PtyBindingPersistenceOperations {
       if (!session.tabsByWorktree[binding.worktreeId]?.some((tab) => tab.id === binding.tabId)) {
         return { value: false, persist: false }
       }
-      const before = cloneWorkspaceSessionState(session)
       const retired = clearReplacedPaneBinding(session, { ...binding, parentTabId: binding.tabId })
       // Host retirement must not run renderer snapshot repair, which would put the old binding back.
       publish(retired)
-      const staged = cloneWorkspaceSessionState(retired)
+      const undo = stageWorkspaceSessionRollback(session, retired)
       return {
         value: true,
-        rollback: () => {
-          publish(
-            rollbackWorkspaceSessionAfterFailedAsyncWrite(
-              before,
-              staged,
-              sessions.getWorkspaceSession(resolved)
-            )
-          )
-        }
+        rollback: () => publish(undo(sessions.getWorkspaceSession(resolved)))
       }
     })
   }
@@ -188,8 +181,9 @@ function writePtyBinding(
   paneKey: string
 ): () => void {
   const { runtime, sessions } = owner[ptyBindingPersistenceOperationsContext]
-  const sessionBeforeBinding = cloneWorkspaceSessionState(session)
-  const restore = (restoredSession = sessionBeforeBinding): void => {
+  // applyPtyBinding is copy-on-write below the top level, so a shallow copy is the whole prior state.
+  const sessionBeforeBinding = { ...session }
+  const restore = (restoredSession: WorkspaceSessionState = sessionBeforeBinding): void => {
     if (resolvedHostId === LOCAL_EXECUTION_HOST_ID) {
       runtime.state.workspaceSession = restoredSession
     } else {
@@ -210,7 +204,10 @@ function writePtyBinding(
     runtime.dirtyProfileStateDomains?.add(
       resolvedHostId === LOCAL_EXECUTION_HOST_ID ? 'workspaceSession' : 'workspaceSessionsByHostId'
     )
-    const boundSession = cloneWorkspaceSessionState(session)
+    const { original, staged: boundSession } = snapshotWorkspaceSessionWrite(
+      sessionBeforeBinding,
+      session
+    )
     return () => {
       const current = sessions.getWorkspaceSession(resolvedHostId)
       const ownerState = (value: WorkspaceSessionState) => {
@@ -230,7 +227,7 @@ function writePtyBinding(
         return
       }
       const rolledBack = rollbackFailedPtyBinding(
-        sessionBeforeBinding,
+        original,
         boundSession,
         current,
         bindingWorktreeId,

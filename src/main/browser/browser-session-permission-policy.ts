@@ -1,8 +1,7 @@
 const AUTO_GRANTED_BROWSER_PERMISSIONS = new Set([
   'fullscreen',
-  // Agent-browser clipboard commands execute via CDP in this session; denying
-  // them breaks trusted runtime commands even when invoked with a user gesture.
-  'clipboard-read',
+  // clipboard-read is absent on purpose: only an in-flight agent-browser clipboard read gets it
+  // (see browser-agent-clipboard-read-grant.ts), so ordinary pages cannot read the clipboard.
   'clipboard-sanitized-write',
   // User-opened browser pages need these profile-scoped grants to complete
   // normal site flows like web push setup and durable app storage.

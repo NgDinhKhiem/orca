@@ -10,14 +10,18 @@ import {
   importCookiesFromBrowser,
   selectBrowserProfile
 } from '../browser/browser-cookie-import'
+import { confirmCookieImportFromCommand } from '../browser/browser-cookie-import-command-consent'
 
 export class RuntimeBrowserCommandsWithBrowserProfileImportFromBrowser extends RuntimeBrowserCommandsWithBrowserTabSetProfile {
-  async browserProfileImportFromBrowser(params: {
-    profileId: string
-    browserFamily: string
-    browserProfile?: string
-    supportsPartitionSkippedCookies?: true
-  }): Promise<BrowserProfileImportFromBrowserResult> {
+  async browserProfileImportFromBrowser(
+    params: {
+      profileId: string
+      browserFamily: string
+      browserProfile?: string
+      supportsPartitionSkippedCookies?: true
+    },
+    caller?: { pairedDeviceId?: string }
+  ): Promise<BrowserProfileImportFromBrowserResult> {
     const profile = browserSessionRegistry.getProfile(params.profileId)
     if (!profile) {
       return { ok: false, reason: 'Session profile not found.' }
@@ -46,6 +50,28 @@ export class RuntimeBrowserCommandsWithBrowserProfileImportFromBrowser extends R
       browser = reselected
     }
 
+    const profileName =
+      browser.profiles.find((candidate) => candidate.directory === browser.selectedProfile)?.name ??
+      browser.selectedProfile
+    // Why: any runtime-token holder can call this; only a paired client's UI already carries the user's click.
+    if (!caller?.pairedDeviceId) {
+      const consent = await confirmCookieImportFromCommand({
+        window: this.host.getAvailableAuthoritativeWindow(),
+        browserLabel: browser.label,
+        sourceProfileName: profileName,
+        targetProfileLabel: profile.label
+      })
+      if (consent !== 'confirmed') {
+        return {
+          ok: false,
+          reason:
+            consent === 'declined'
+              ? 'The cookie import was cancelled in Orca.'
+              : 'Cookie import from a command needs confirmation in an open Orca window. Import from Settings instead.'
+        }
+      }
+    }
+
     const result = await importCookiesFromBrowser(browser, profile.partition, {
       canReportPartitionSkippedCookies: params.supportsPartitionSkippedCookies === true
     })
@@ -53,9 +79,6 @@ export class RuntimeBrowserCommandsWithBrowserProfileImportFromBrowser extends R
       return result
     }
 
-    const profileName =
-      browser.profiles.find((candidate) => candidate.directory === browser.selectedProfile)?.name ??
-      browser.selectedProfile
     browserSessionRegistry.updateProfileSource(params.profileId, {
       browserFamily: browser.family,
       profileName,

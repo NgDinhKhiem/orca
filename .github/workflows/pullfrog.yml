@@ -40,12 +40,12 @@ jobs:
       number: ${{ steps.scope.outputs.number }}
       head: ${{ steps.scope.outputs.head }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           sparse-checkout: config/scripts/pullfrog-review-scope.cjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         id: scope
         with:
           script: |
@@ -62,13 +62,15 @@ jobs:
       pull-requests: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 1
+          # Pullfrog strips checkout credentials and authenticates git with its own token.
+          persist-credentials: false
       - name: Recheck review head before starting agent
         id: freshness
         if: needs.review_scope.outputs.number != ''
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           REVIEW_NUMBER: ${{ needs.review_scope.outputs.number }}
           REVIEW_HEAD: ${{ needs.review_scope.outputs.head }}
@@ -78,7 +80,7 @@ jobs:
             core.setOutput('current', pr.state === 'open' && pr.head.sha === process.env.REVIEW_HEAD)
       - name: Run agent
         if: needs.review_scope.outputs.number == '' || steps.freshness.outputs.current == 'true'
-        uses: pullfrog/pullfrog@v0
+        uses: pullfrog/pullfrog@ed800018463e1b84e8e3377f662173aed1da98b0 # v0
         with:
           prompt: ${{ inputs.prompt }}
         env:

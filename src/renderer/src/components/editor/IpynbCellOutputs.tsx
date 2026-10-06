@@ -1,4 +1,6 @@
 import type { ITheme } from '@xterm/xterm'
+import { memo, useMemo } from 'react'
+import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
 import {
   DEFAULT_TERMINAL_THEME_DARK,
@@ -69,13 +71,35 @@ function isRenderableMime(mime: string): boolean {
   )
 }
 
+// Why: like Jupyter, a runaway stream shows only its tail so each streamed frame stays cheap to render.
+const MAX_RENDERED_OUTPUT_LINES = 5_000
+
+/** Keeps the last `maxLines` lines of `text`, reporting how many earlier lines were dropped. */
+function capOutputLines(text: string): { shown: string; hiddenLineCount: number } {
+  // A trailing newline ends the last line rather than starting an empty one.
+  let cut = text.endsWith('\n') ? text.length - 1 : text.length
+  for (let kept = 0; kept < MAX_RENDERED_OUTPUT_LINES; kept += 1) {
+    cut = cut > 0 ? text.lastIndexOf('\n', cut - 1) : -1
+    if (cut === -1) {
+      return { shown: text, hiddenLineCount: 0 }
+    }
+  }
+  let hiddenLineCount = 0
+  for (let index = text.indexOf('\n'); index !== -1 && index <= cut;) {
+    hiddenLineCount += 1
+    index = text.indexOf('\n', index + 1)
+  }
+  return { shown: text.slice(cut + 1), hiddenLineCount }
+}
+
 function AnsiText({ text }: { text: string }): React.JSX.Element {
   const palette = ANSI_PALETTES[useDocumentDarkTheme() ? 'dark' : 'light']
+  const segments = useMemo(() => parseAnsiSegments(text), [text])
   const resolve = (color: AnsiColor | undefined): string | undefined =>
     typeof color === 'number' ? palette[color] : color
   return (
     <>
-      {parseAnsiSegments(text).map((segment, index) => (
+      {segments.map((segment, index) => (
         <span
           key={index}
           style={{
@@ -94,15 +118,27 @@ function AnsiText({ text }: { text: string }): React.JSX.Element {
 }
 
 function TextOutput({ text, error = false }: { text: string; error?: boolean }) {
+  const { shown, hiddenLineCount } = useMemo(() => capOutputLines(text), [text])
   return (
-    <pre
-      className={cn(
-        'max-h-[420px] overflow-auto whitespace-pre-wrap rounded-md px-3 py-2 font-mono text-xs leading-5 text-foreground scrollbar-editor',
-        error && 'bg-destructive/10'
-      )}
-    >
-      <AnsiText text={text} />
-    </pre>
+    <>
+      {hiddenLineCount > 0 ? (
+        <div className="px-3 text-xs text-muted-foreground">
+          {translate(
+            'auto.components.editor.IpynbViewer.outputLinesTruncated',
+            '{{lines}} earlier lines truncated',
+            { lines: hiddenLineCount }
+          )}
+        </div>
+      ) : null}
+      <pre
+        className={cn(
+          'max-h-[420px] overflow-auto whitespace-pre-wrap rounded-md px-3 py-2 font-mono text-xs leading-5 text-foreground scrollbar-editor',
+          error && 'bg-destructive/10'
+        )}
+      >
+        <AnsiText text={shown} />
+      </pre>
+    </>
   )
 }
 
@@ -126,7 +162,8 @@ function DisplayItem({ item }: { item: IpynbOutputItem }): React.JSX.Element | n
   return <TextOutput text={valueToText(item.value)} />
 }
 
-function Output({ output }: { output: IpynbOutput }): React.JSX.Element | null {
+// Why: streaming re-renders a cell's outputs per batch; earlier, unchanged outputs keep their identity.
+const Output = memo(function Output({ output }: { output: IpynbOutput }): React.JSX.Element | null {
   if (output.kind === 'stream') {
     return <TextOutput text={output.text} error={output.name === 'stderr'} />
   }
@@ -137,7 +174,7 @@ function Output({ output }: { output: IpynbOutput }): React.JSX.Element | null {
   // Items arrive richest-first; like Jupyter, show only the best representation.
   const item = output.items.find((candidate) => isRenderableMime(candidate.mime))
   return item ? <DisplayItem item={item} /> : null
-}
+})
 
 export function IpynbCellOutputs({ cell }: { cell: IpynbCell }): React.JSX.Element | null {
   if (cell.outputs.length === 0) {

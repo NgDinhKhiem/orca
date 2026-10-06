@@ -1,6 +1,11 @@
 /* eslint-disable no-control-regex -- Why: PTY output interleaves ANSI escapes with paths, so candidate scanning must terminate matches on the control bytes themselves. */
 // Path candidates harvested from PTY output so terminal artifact links can be
 // resolved without re-scanning the whole transcript.
+import {
+  findPathExtensionMatchEnds,
+  findSlashExtensionPathMatches
+} from './terminal-output-path-extension-scan'
+
 const RECENT_PTY_PATH_CANDIDATE_LIMIT = 1024
 const RECENT_PTY_PATH_CANDIDATE_MAX_BYTES = 4 * 1024
 const RECENT_PTY_PATH_CANDIDATE_TOTAL_BYTES = 64 * 1024
@@ -189,13 +194,11 @@ function collectTerminalOutputLinePathCandidates(line: string, add: (value: stri
     }
     add(match[0])
   }
-  for (const match of line.matchAll(
-    /\/[^\r\n\x1b"'<>]*\.[A-Za-z0-9_+-]+(?:[#:\s][^\r\n\x1b"'<>]*)?/g
-  )) {
+  for (const match of findSlashExtensionPathMatches(line)) {
     if (isInsideNonLocalFileUri(line, match.index)) {
       continue
     }
-    add(match[0])
+    add(match.text)
   }
 }
 
@@ -209,14 +212,16 @@ function trimTerminalOutputPathCandidate(value: string): string {
     return ''
   }
   let selected: string | null = null
-  for (const match of candidate.matchAll(
-    /.+?\.[A-Za-z0-9_+-]+(?:#L\d+(?:C\d+)?|(?::\d+)?(?::\d+)?)?(?=\s+|$)/gi
-  )) {
-    const end = match.index + match[0].length
-    const text = candidate.slice(0, end)
-    if (countTerminalOutputPathStarts(text) > 1) {
+  const pathStartEnds = findTerminalOutputPathStartEnds(candidate)
+  let pathStartsInPrefix = 0
+  for (const end of findPathExtensionMatchEnds(candidate)) {
+    while (pathStartsInPrefix < pathStartEnds.length && pathStartEnds[pathStartsInPrefix]! <= end) {
+      pathStartsInPrefix += 1
+    }
+    if (pathStartsInPrefix > 1) {
       continue
     }
+    const text = candidate.slice(0, end)
     // Same as the tap parsers: a line-end token extends the candidate only when the added segment is path-like, so trailing prose isn't swallowed.
     if (
       end < candidate.length ||
@@ -246,13 +251,17 @@ function isInsideNonLocalFileUri(output: string, pathStart: number): boolean {
   return !!match && !isTerminalOutputLoopbackAuthority(match[1] ?? '')
 }
 
-function countTerminalOutputPathStarts(value: string): number {
-  let count = 0
+/**
+ * End offsets of every path start in `value`, ascending.
+ * Why: a prefix holds exactly the starts that end inside it (no start can begin inside
+ * another's non-whitespace tail), so one scan replaces a rescan per candidate end.
+ */
+function findTerminalOutputPathStartEnds(value: string): number[] {
+  const ends: number[] = []
   for (const match of value.matchAll(/(?:^|\s)(?:~[\\/]|[\\/]|\.{1,2}[\\/]|[A-Za-z]:[\\/])/g)) {
-    void match
-    count += 1
+    ends.push(match.index + match[0].length)
   }
-  return count
+  return ends
 }
 
 function trimTerminalOutputPathLocator(value: string): string {

@@ -18,8 +18,12 @@ const TIME_ONLY_RE = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i
 // Why: newer Codex CLIs print 24-hour reset times ("10:21 on 28 Jul") with no am/pm.
 const TIME_24H_RE = /\b(\d{1,2}):(\d{2})\b/
 const DAY_MONTH_RE = new RegExp(`\\b(?:on\\s+)?(\\d{1,2})\\s+(${MONTH_PATTERN})\\b`, 'i')
-const RELATIVE_RESET_RE = /^(?:\s*\d+\s*(?:d(?:ays?)?|h(?:ours?|rs?)?|m(?:in(?:ute)?s?)?)\s*)+$/i
-const RELATIVE_RESET_TOKEN_RE = /(\d+)\s*(d(?:ays?)?|h(?:ours?|rs?)?|m(?:in(?:ute)?s?)?)/gi
+// Why: a sticky tokenizer instead of `^(?:\s*\d+\s*unit\s*)+$`, whose two adjacent
+// `\s*` made a non-matching tail backtrack exponentially in the token count.
+const RELATIVE_RESET_TOKEN_RE = /\s*(\d+)\s*(d(?:ays?)?|h(?:ours?|rs?)?|m(?:in(?:ute)?s?)?)\s*/iy
+const MAX_RELATIVE_RESET_CHARS = 64
+// Real reset descriptions are under 80 chars; PTY lines without breaks can be ~100 KB.
+const MAX_RESET_DESCRIPTION_CHARS = 256
 const IANA_TIME_ZONE_RE = /\(([^()]*)\)?\s*$/
 
 export type ClaudePtyResetMetadata = Pick<RateLimitWindow, 'resetsAt' | 'resetDescription'>
@@ -83,7 +87,9 @@ export function extractClaudePtyResetMetadata(
       }
       const m = RESET_LINE_RE.exec(lines[j])
       if (m) {
-        const resetDescription = normalizeResetDescription(m[1])
+        const resetDescription = normalizeResetDescription(
+          m[1].slice(0, MAX_RESET_DESCRIPTION_CHARS)
+        )
         return {
           resetsAt: parseResetTimestamp(resetDescription),
           resetDescription
@@ -166,12 +172,20 @@ function parseTwentyFourHourResetTimestamp(resetDescription: string): number | n
 }
 
 function parseRelativeResetTimestamp(resetDescription: string): number | null {
-  if (!RELATIVE_RESET_RE.test(resetDescription)) {
+  if (resetDescription.length > MAX_RELATIVE_RESET_CHARS) {
     return null
   }
 
   let durationMs = 0
-  for (const match of resetDescription.matchAll(RELATIVE_RESET_TOKEN_RE)) {
+  let index = 0
+  // The whole description must be tokens; any leftover text means it is not relative.
+  while (index === 0 || index < resetDescription.length) {
+    RELATIVE_RESET_TOKEN_RE.lastIndex = index
+    const match = RELATIVE_RESET_TOKEN_RE.exec(resetDescription)
+    if (!match) {
+      return null
+    }
+    index = RELATIVE_RESET_TOKEN_RE.lastIndex
     const amount = Number(match[1])
     const unit = match[2].toLowerCase()[0]
     if (!Number.isFinite(amount)) {

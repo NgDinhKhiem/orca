@@ -22,7 +22,8 @@ export function readRemoteHomeCommand(host: RemoteHostPlatform): string {
 
 export function makeRemoteDirectoryCommand(host: RemoteHostPlatform, remotePath: string): string {
   if (!isWindowsRemoteHost(host)) {
-    return `mkdir -p ${shellEscape(remotePath)}`
+    // Why -m 700: Orca's remote dirs hold relay logs, sockets and credentials. Pre-existing dirs keep their mode.
+    return `mkdir -p -m 700 ${shellEscape(remotePath)}`
   }
   // New-Item has no -LiteralPath parameter; using it breaks stock Windows PowerShell.
   return powerShellCommand(

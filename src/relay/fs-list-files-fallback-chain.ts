@@ -9,6 +9,7 @@ import {
 import { isQuickOpenReaddirBudgetError } from '../shared/quick-open-readdir-walk'
 import { buildInstallRgMessage, buildRipgrepRequiredMessage } from '../shared/quick-open-install-rg'
 import { buildRelayCommandEnv } from './relay-command-env'
+import { withGitRepoConfigCommandGuard } from '../shared/git-repo-config-command-guard'
 import { RipgrepUnavailableError } from '../shared/ripgrep-process-availability'
 import { QuickOpenPathRanker } from '../shared/quick-open-path-search'
 
@@ -45,7 +46,7 @@ export async function runListFilesScan(
   // Detect Git ancestry so folder roots inside a checkout still honor its ignores.
   const isGitRepo = await runProcess({
     program: 'git',
-    args: ['rev-parse', '--is-inside-work-tree'],
+    args: withGitRepoConfigCommandGuard(['rev-parse', '--is-inside-work-tree']),
     cwd: rootPath,
     env: buildRelayCommandEnv(),
     timeoutMs: 5_000,

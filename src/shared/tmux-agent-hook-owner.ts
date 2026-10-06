@@ -15,6 +15,7 @@ import {
   type TmuxHookPane
 } from './tmux-client-attachment'
 import { probeTmuxHostAttachments } from './tmux-host-attachment-probe'
+import { TmuxAttachmentRefreshTimer } from './tmux-attachment-refresh-timer'
 export { isTmuxInnerSubject } from './tmux-selected-status'
 
 export type TmuxManagedPty = {
@@ -33,7 +34,11 @@ type OuterPane = {
 /** Inner observations live in the hook owner's canonical store; this index holds attachments only. */
 export class TmuxAgentHookOwner {
   private readonly outers = new Map<string, OuterPane>()
-  private timer: ReturnType<typeof setInterval> | undefined
+  private readonly refreshTimer = new TmuxAttachmentRefreshTimer({
+    refresh: () => this.refresh(),
+    hasWork: () => !this.stopped && this.outers.size > 0,
+    attachments: () => this.outers.values()
+  })
   private refreshing: Promise<void> | undefined
   private stopped = false
   private lastRefreshAt = -Infinity
@@ -149,12 +154,7 @@ export class TmuxAgentHookOwner {
         }
       }
     })
-    if (!this.timer) {
-      this.timer = setInterval(() => {
-        void this.refresh()
-      }, 1000)
-      this.timer.unref?.()
-    }
+    this.refreshTimer.noteActivity()
     this.project(outer)
     await this.refresh()
     return true
@@ -178,7 +178,7 @@ export class TmuxAgentHookOwner {
       return Promise.resolve()
     }
     this.lastRefreshAt = this.now()
-    const work = this.refreshAttachments().finally(() => {
+    const work = this.refreshTimer.track(this.refreshAttachments()).finally(() => {
       if (this.refreshing === work) {
         this.refreshing = undefined
       }
@@ -290,8 +290,7 @@ export class TmuxAgentHookOwner {
       this.options.store().applyMutation({ removeParent: subject })
     }
     if (this.outers.size === 0) {
-      clearInterval(this.timer)
-      this.timer = undefined
+      this.refreshTimer.stop()
     }
   }
 

@@ -44,7 +44,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout orca
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Resolve tag and version
         id: tag
@@ -138,7 +138,7 @@ jobs:
       # cross-repo; a short-lived installation token can.
       - name: Generate buf0-bot token
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: 2590194
           private-key: ${{ secrets.BUFO_BOT_PRIVATE_KEY }}
@@ -146,7 +146,7 @@ jobs:
           repositories: homebrew-orca
 
       - name: Checkout tap
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: stablyai/homebrew-orca
           path: tap

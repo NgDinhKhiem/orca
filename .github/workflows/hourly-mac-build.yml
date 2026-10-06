@@ -71,7 +71,7 @@ jobs:
     steps:
       - name: Mint hourly repo token
         id: app_token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ secrets.HOURLY_RELEASE_APP_ID }}
           private-key: ${{ secrets.HOURLY_RELEASE_APP_PRIVATE_KEY }}
@@ -147,7 +147,7 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.preflight.outputs.head_sha }}
           # Version helpers only read HEAD; published versions come from git tags.
@@ -160,7 +160,7 @@ jobs:
 
       - name: Mint hourly repo token
         id: app_token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ secrets.HOURLY_RELEASE_APP_ID }}
           private-key: ${{ secrets.HOURLY_RELEASE_APP_PRIVATE_KEY }}
@@ -168,12 +168,12 @@ jobs:
           repositories: orca-hourly
 
       - name: Setup pnpm
-        uses: pnpm/setup@v2
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
         with:
           install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: package.json
           cache: pnpm
@@ -182,7 +182,7 @@ jobs:
             mobile/pnpm-lock.yaml
 
       - name: Cache electron-builder downloads
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/Library/Caches/electron
@@ -194,7 +194,7 @@ jobs:
       # Why both CPUs: the mac config packages x64 and arm64 from this arm64
       # runner, so the install must carry both variants of the native optional deps.
       - name: Install dependencies
-        uses: nick-fields/retry@v4
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
           timeout_minutes: 10
           max_attempts: 3
@@ -270,7 +270,7 @@ jobs:
       # Only a Windows runner compiles these; the relay-windows-process-tree job
       # built them for this run.
       - name: Collect the Windows process-table addons for the relay
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: relay-windows-process-tree
           path: .build/windows-process-tree
@@ -294,7 +294,7 @@ jobs:
       # part the full budget.
       - name: Re-mint hourly repo token for publish
         id: app_token_publish
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ secrets.HOURLY_RELEASE_APP_ID }}
           private-key: ${{ secrets.HOURLY_RELEASE_APP_PRIVATE_KEY }}
@@ -344,7 +344,7 @@ jobs:
           echo "tag=$TAG" >>"$GITHUB_OUTPUT"
 
       - name: Publish hourly macOS artifacts
-        uses: nick-fields/retry@v4
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
           # Why 45 like the release pipeline: an attempt is pack + notarize +
           # upload, and the notary queue is the unbounded part. Why 2 attempts and

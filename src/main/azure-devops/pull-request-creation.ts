@@ -1,6 +1,5 @@
 import type { ExecutionHostId } from '../../shared/execution-host'
 import { hostedReviewSshConnectionId } from '../source-control/hosted-review-execution-host'
-import { Buffer } from 'node:buffer'
 import type { CreateHostedReviewInput, CreateHostedReviewResult } from '../../shared/hosted-review'
 import {
   normalizeHostedReviewBaseRef,
@@ -13,6 +12,9 @@ import {
 import { readHostedPullRequestTemplate } from '../source-control/pull-request-template'
 import {
   azureDevOpsApiVersionForOrigin,
+  azureDevOpsAuthHeadersForUrl,
+  azureDevOpsTokenConfigured,
+  getAzureDevOpsAuthConfig,
   isAzureDevOpsPreviewVersionRejection,
   markAzureDevOpsPreviewApiVersionOrigin,
   resolveAzureDevOpsGitApiBaseUrl
@@ -23,39 +25,11 @@ import { getAzureDevOpsRepoRef, type AzureDevOpsRepoRef } from './repository-ref
 
 const CREATE_REQUEST_TIMEOUT_MS = 60_000
 
-type AzureDevOpsCreateAuthConfig = {
-  pat: string | null
-  accessToken: string | null
-  username: string | null
-}
-
-function envValue(name: string): string | null {
-  const value = process.env[name]?.trim() ?? ''
-  return value.length > 0 ? value : null
-}
-
-function getAuthConfig(): AzureDevOpsCreateAuthConfig {
-  return {
-    pat: envValue('ORCA_AZURE_DEVOPS_TOKEN') ?? envValue('ORCA_AZURE_DEVOPS_PAT'),
-    accessToken: envValue('ORCA_AZURE_DEVOPS_ACCESS_TOKEN'),
-    username: envValue('ORCA_AZURE_DEVOPS_USERNAME')
-  }
-}
+const BASE_URL_REQUIRED_ERROR =
+  'Create PR failed: Orca only sends Azure DevOps tokens to dev.azure.com, visualstudio.com, or the server in ORCA_AZURE_DEVOPS_API_BASE_URL. Next step: set ORCA_AZURE_DEVOPS_API_BASE_URL to your Azure DevOps Server URL in this environment.'
 
 export function isAzureDevOpsReviewCreationAuthenticated(): boolean {
-  const config = getAuthConfig()
-  return Boolean(config.pat || config.accessToken)
-}
-
-function authHeaders(config: AzureDevOpsCreateAuthConfig): Record<string, string> {
-  if (config.accessToken) {
-    return { Authorization: `Bearer ${config.accessToken}` }
-  }
-  if (config.pat) {
-    const encoded = Buffer.from(`${config.username ?? ''}:${config.pat}`).toString('base64')
-    return { Authorization: `Basic ${encoded}` }
-  }
-  return {}
+  return azureDevOpsTokenConfigured(getAzureDevOpsAuthConfig())
 }
 
 function apiUrl(repo: AzureDevOpsRepoRef, path: string): URL {
@@ -223,6 +197,17 @@ export async function createAzureDevOpsPullRequest(
     ...(input.draft ? { isDraft: true } : {})
   }
 
+  const authHeaders = azureDevOpsAuthHeadersForUrl(resolveAzureDevOpsGitApiBaseUrl(repo))
+  if (!authHeaders.Authorization) {
+    return {
+      ok: false,
+      code: 'auth_required',
+      error: isAzureDevOpsReviewCreationAuthenticated()
+        ? BASE_URL_REQUIRED_ERROR
+        : 'Create PR failed: Azure DevOps is not authenticated. Next step: set ORCA_AZURE_DEVOPS_TOKEN in this environment.'
+    }
+  }
+
   try {
     const raw = await requestCreatePullRequest(
       repo,
@@ -232,7 +217,7 @@ export async function createAzureDevOpsPullRequest(
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
-          ...authHeaders(getAuthConfig())
+          ...authHeaders
         },
         body: JSON.stringify(requestBody)
       }

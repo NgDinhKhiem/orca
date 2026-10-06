@@ -22,7 +22,7 @@ describe('ref-mirroring vet steps', () => {
     const job = readWorkflow(`.github/workflows/${channel}-mac-build.yml`).jobs[
       `build-${channel}-mac`
     ]
-    const checkout = job.steps.find((step) => step.uses === 'actions/checkout@v6')
+    const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'))
     expect(checkout.with['fetch-depth']).toBe(1)
     expect(job.steps.some((step) => step.run?.includes('gh release list'))).toBe(true)
     expect(
@@ -51,7 +51,7 @@ describe('ref-mirroring vet steps', () => {
 
   it('retains release-cut history for version reservation and retry ancestry', () => {
     const checkout = readWorkflow('.github/workflows/release-cut.yml').jobs.cut.steps.find(
-      (step) => step.uses === 'actions/checkout@v6'
+      (step) => step.uses?.startsWith('actions/checkout@')
     )
     expect(checkout.with['fetch-depth']).toBe(0)
   })

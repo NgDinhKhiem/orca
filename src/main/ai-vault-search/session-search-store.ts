@@ -73,6 +73,7 @@ export class SessionSearchStore {
   // another pass rather than starting a second walk of the same rows.
   private draining = false
   private drainRequested = false
+  private cachedMessageCount: { version: string; count: number } | null = null
 
   constructor(
     path: string,
@@ -319,11 +320,26 @@ export class SessionSearchStore {
 
   /** Messages the index holds. Read with the file states so both describe one moment. */
   private messageCount(): number {
-    const row: unknown = this.db.prepare('SELECT count(*) AS n FROM messages').get()
-    if (row && typeof row === 'object' && 'n' in row && typeof row.n === 'number') {
-      return row.n
+    // Why: count(*) walks every message row and the panel polls this every 2 s; reuse it
+    // until this connection writes (total_changes) or another one commits (data_version).
+    const version = this.writeVersion()
+    if (version !== null && this.cachedMessageCount?.version === version) {
+      return this.cachedMessageCount.count
     }
-    return 0
+    const row: unknown = this.db.prepare('SELECT count(*) AS n FROM messages').get()
+    const count =
+      row && typeof row === 'object' && 'n' in row && typeof row.n === 'number' ? row.n : 0
+    this.cachedMessageCount = version === null ? null : { version, count }
+    return count
+  }
+
+  private writeVersion(): string | null {
+    const changes = asRecord(this.db.prepare('SELECT total_changes() AS n').get())?.n
+    const dataVersion = asRecord(this.db.prepare('PRAGMA data_version').get())?.data_version
+    if (typeof changes !== 'number' || typeof dataVersion !== 'number') {
+      return null
+    }
+    return `${changes}:${dataVersion}`
   }
 
   /**

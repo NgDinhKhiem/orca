@@ -5,7 +5,11 @@ const mocks = vi.hoisted(() => ({
   handleGuestWillDownload: vi.fn(),
   noticeDocPreviewDownloadBlocked: vi.fn(),
   clearBrowserWebAuthnAccessHandlers: vi.fn(),
-  installBrowserWebAuthnAccessHandlers: vi.fn()
+  installBrowserWebAuthnAccessHandlers: vi.fn(),
+  // Why default true: Windows/Linux have no OS media gate, so this models the platform where the bug lived.
+  systemMediaGranted: true,
+  showMessageBox: vi.fn(),
+  fromWebContents: vi.fn()
 }))
 
 type WillDownloadListener = (
@@ -54,6 +58,8 @@ function fakeSession(): FakeSession {
 }
 
 vi.mock('electron', () => ({
+  dialog: { showMessageBox: mocks.showMessageBox },
+  BrowserWindow: { fromWebContents: mocks.fromWebContents },
   session: {
     fromPartition: (partition: string) => {
       const existing = sessionsByPartition.get(partition)
@@ -78,8 +84,8 @@ vi.mock('./doc-preview-download-block-notice', () => ({
   noticeDocPreviewDownloadBlocked: mocks.noticeDocPreviewDownloadBlocked
 }))
 vi.mock('./browser-media-access', () => ({
-  hasSystemMediaAccess: () => false,
-  requestSystemMediaAccess: async () => false
+  hasSystemMediaAccess: () => mocks.systemMediaGranted,
+  requestSystemMediaAccess: async () => mocks.systemMediaGranted
 }))
 vi.mock('./browser-session-ua', () => ({
   installBrowserSessionUserAgentPolicy: vi.fn(() => vi.fn())
@@ -131,6 +137,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   sessionsByPartition.clear()
   vi.resetModules()
+  mocks.systemMediaGranted = true
+  mocks.fromWebContents.mockImplementation(() => ({ isDestroyed: () => false }))
 })
 
 describe('partition download policy', () => {
@@ -229,5 +237,175 @@ describe('partition permission policy', () => {
       displayMediaDecision = decision
     })
     expect(displayMediaDecision).toEqual({ video: undefined, audio: undefined })
+  })
+})
+
+type RequestHandler = (
+  webContents: unknown,
+  permission: string,
+  callback: (allowed: boolean) => void,
+  details?: Record<string, unknown>
+) => void
+type CheckHandler = (
+  webContents: unknown,
+  permission: string,
+  requestingOrigin: string,
+  details?: Record<string, unknown>
+) => boolean
+
+async function installBrowserPartition(
+  partition: string
+): Promise<{ request: RequestHandler; check: CheckHandler }> {
+  const install = await loadInstaller()
+  install(profileFor(partition))
+  const sess = sessionsByPartition.get(partition)
+  if (!sess) {
+    throw new Error(`Expected session for ${partition}`)
+  }
+  return {
+    request: sess.setPermissionRequestHandler.mock.calls[0]?.[0] as RequestHandler,
+    check: sess.setPermissionCheckHandler.mock.calls[0]?.[0] as CheckHandler
+  }
+}
+
+function guestAt(url: string, id = 7): Record<string, unknown> {
+  return { id, getURL: () => url, hostWebContents: { id: 1 } }
+}
+
+function requestDecision(
+  request: RequestHandler,
+  guest: unknown,
+  permission: string,
+  details?: Record<string, unknown>
+): Promise<boolean> {
+  return new Promise((resolve) => request(guest, permission, resolve, details))
+}
+
+function answerMediaPrompt(label: 'Allow' | 'Block'): void {
+  mocks.showMessageBox.mockImplementation(
+    async (_window: unknown, options: { buttons: string[] }) => ({
+      response: options.buttons.indexOf(label)
+    })
+  )
+}
+
+describe('partition media consent', () => {
+  it('asks before granting a site the camera, and honours Block', async () => {
+    const { request, check } = await installBrowserPartition('persist:browsing-1')
+    answerMediaPrompt('Block')
+
+    const granted = await requestDecision(request, guestAt('https://meet.example/room'), 'media', {
+      mediaTypes: ['video']
+    })
+
+    expect(granted).toBe(false)
+    expect(mocks.showMessageBox).toHaveBeenCalledTimes(1)
+    const options = mocks.showMessageBox.mock.calls[0]?.[1] as { message: string }
+    expect(options.message).toContain('https://meet.example')
+    expect(options.message).toContain('camera')
+    expect(
+      check(null, 'media', 'https://meet.example', {
+        mediaType: 'video',
+        securityOrigin: 'https://meet.example/'
+      })
+    ).toBe(false)
+  })
+
+  it('remembers Allow per origin and per profile', async () => {
+    const { request, check } = await installBrowserPartition('persist:browsing-1')
+    answerMediaPrompt('Allow')
+    const guest = guestAt('https://meet.example/room')
+
+    expect(await requestDecision(request, guest, 'media', { mediaTypes: ['audio'] })).toBe(true)
+    expect(await requestDecision(request, guest, 'media', { mediaTypes: ['audio'] })).toBe(true)
+    expect(mocks.showMessageBox).toHaveBeenCalledTimes(1)
+    expect(
+      check(null, 'media', 'https://meet.example', {
+        mediaType: 'audio',
+        securityOrigin: 'https://meet.example/'
+      })
+    ).toBe(true)
+    // Microphone consent does not cover the camera.
+    expect(
+      check(null, 'media', 'https://meet.example', {
+        mediaType: 'video',
+        securityOrigin: 'https://meet.example/'
+      })
+    ).toBe(false)
+    expect(
+      check(null, 'media', 'https://other.example', {
+        mediaType: 'audio',
+        securityOrigin: 'https://other.example/'
+      })
+    ).toBe(false)
+
+    const other = await installBrowserPartition('persist:browsing-2')
+    answerMediaPrompt('Block')
+    expect(await requestDecision(other.request, guest, 'media', { mediaTypes: ['audio'] })).toBe(
+      false
+    )
+    expect(mocks.showMessageBox).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['http://evil.example/', 'file:///C:/page.html', 'about:blank'])(
+    'denies %s without prompting',
+    async (url) => {
+      const { request } = await installBrowserPartition('persist:browsing-1')
+      answerMediaPrompt('Allow')
+
+      expect(await requestDecision(request, guestAt(url), 'media', { mediaTypes: ['video'] })).toBe(
+        false
+      )
+      expect(mocks.showMessageBox).not.toHaveBeenCalled()
+    }
+  )
+
+  it('allows plain-http localhost after consent', async () => {
+    const { request } = await installBrowserPartition('persist:browsing-1')
+    answerMediaPrompt('Allow')
+
+    expect(
+      await requestDecision(request, guestAt('http://localhost:5173/'), 'media', {
+        mediaTypes: ['video']
+      })
+    ).toBe(true)
+  })
+
+  it('fails closed for a headless guest with no window to ask in', async () => {
+    const { request } = await installBrowserPartition('persist:browsing-1')
+    answerMediaPrompt('Allow')
+    const offscreenGuest = { id: 9, getURL: () => 'https://meet.example/' }
+
+    expect(await requestDecision(request, offscreenGuest, 'media', { mediaTypes: ['video'] })).toBe(
+      false
+    )
+    expect(mocks.showMessageBox).not.toHaveBeenCalled()
+  })
+})
+
+describe('partition clipboard-read policy', () => {
+  it('denies clipboard-read to ordinary pages but keeps sanitized write', async () => {
+    const { request, check } = await installBrowserPartition('persist:browsing-1')
+    const guest = guestAt('https://evil.example/')
+
+    expect(await requestDecision(request, guest, 'clipboard-read')).toBe(false)
+    expect(check(guest, 'clipboard-read', 'https://evil.example')).toBe(false)
+    expect(await requestDecision(request, guest, 'clipboard-sanitized-write')).toBe(true)
+  })
+
+  it('grants clipboard-read only to the page an agent clipboard read is in flight for', async () => {
+    const { request, check } = await installBrowserPartition('persist:browsing-1')
+    const { beginAgentClipboardRead } = await import('./browser-agent-clipboard-read-grant')
+    const agentPage = guestAt('https://app.example/', 11)
+    const otherPage = guestAt('https://evil.example/', 12)
+
+    const release = beginAgentClipboardRead(11)
+    expect(await requestDecision(request, agentPage, 'clipboard-read')).toBe(true)
+    expect(check(agentPage, 'clipboard-read', 'https://app.example')).toBe(true)
+    expect(await requestDecision(request, otherPage, 'clipboard-read')).toBe(false)
+    release()
+
+    expect(await requestDecision(request, agentPage, 'clipboard-read')).toBe(false)
+    expect(check(agentPage, 'clipboard-read', 'https://app.example')).toBe(false)
   })
 })

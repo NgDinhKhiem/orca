@@ -82,6 +82,8 @@ describe('Gitea hosted review integration', () => {
         ['remote', 'add', 'origin', `http://127.0.0.1:${address.port}/team/repo.git`],
         { cwd: repoPath }
       )
+      // Why: the token only goes to the configured server, here an explicit http choice.
+      process.env.ORCA_GITEA_API_BASE_URL = `http://127.0.0.1:${address.port}`
 
       await expect(
         getHostedReviewForBranch({

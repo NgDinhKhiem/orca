@@ -52,6 +52,7 @@ function sharedCreateFields(
     ...(request.compareBaseRef ? { compareBaseRef: request.compareBaseRef } : {}),
     ...(attempt.branchNameOverride ? { branchNameOverride: attempt.branchNameOverride } : {}),
     setupDecision: request.setupDecision,
+    ...(request.setupTrust ? { setupTrust: request.setupTrust } : {}),
     sparseCheckout: request.sparseCheckout,
     ...(request.displayName ? { displayName: request.displayName } : {}),
     ...((request.displayNameKind ?? options?.displayNameKind)

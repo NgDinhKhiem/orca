@@ -3,6 +3,7 @@
 import { dirname, join } from 'node:path'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import type { Socket } from 'node:net'
+import { secretsMatch } from '../shared/constant-time-secret-compare'
 import {
   RELAY_VERSION,
   MessageType,
@@ -141,7 +142,7 @@ function handleDaemonHandshakeFrame(
     return false
   }
   const presented = 'endpointCredential' in msg ? msg.endpointCredential : undefined
-  if (endpointCredential !== undefined && presented !== endpointCredential) {
+  if (endpointCredential !== undefined && !secretsMatch(presented, endpointCredential)) {
     relayLogLine('[relay] Endpoint credential mismatch; closing socket')
     try {
       sock.write(encodeHandshakeFrame({ type: 'orca-relay-handshake-credential-mismatch' }))

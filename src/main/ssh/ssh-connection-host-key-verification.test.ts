@@ -126,6 +126,54 @@ describe('SshConnection host key verification', () => {
     }
   )
 
+  describe('an unknown host under the default StrictHostKeyChecking=ask', () => {
+    it('asks the user to confirm, naming the host and SHA256 fingerprint, then connects', async () => {
+      const onHostKeyConfirmRequest = vi.fn(async () => 'confirmed' as const)
+      const conn = new SshConnection(createTarget(), createCallbacks({ onHostKeyConfirmRequest }))
+
+      await conn.connect()
+
+      expect(onHostKeyConfirmRequest).toHaveBeenCalledWith(
+        'target-1',
+        expect.objectContaining({
+          displayHost: 'example.com',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: expect.stringMatching(/^SHA256:/)
+        }),
+        expect.anything()
+      )
+      expect(ssh2Mock.lastHostKeyAccepted).toBe(true)
+      expect(conn.getState().status).toBe('connected')
+    })
+
+    it('refuses the host without offering credentials when the user declines', async () => {
+      const onCredentialRequest = vi.fn(async () => 'secret')
+      const conn = new SshConnection(
+        createTarget(),
+        createCallbacks({
+          onHostKeyConfirmRequest: async () => 'declined',
+          onCredentialRequest
+        })
+      )
+
+      await expect(conn.connect()).rejects.toThrow(/host key verification failed/i)
+      expect(ssh2Mock.lastHostKeyAccepted).toBe(false)
+      expect(onCredentialRequest).not.toHaveBeenCalled()
+      expect(connectAttempts).toBe(1)
+    })
+
+    it('fails closed with a known_hosts remedy when nothing can show a prompt', async () => {
+      const conn = new SshConnection(
+        createTarget(),
+        createCallbacks({ onHostKeyConfirmRequest: undefined })
+      )
+
+      await expect(conn.connect()).rejects.toThrow(/known_hosts/)
+      expect(ssh2Mock.lastHostKeyAccepted).toBe(false)
+    })
+  })
+
   // Retrying re-derives the same decision, so a ladder that treated this as transient would back off
   // against a host it has already refused until it gave up — burying the reason.
   it('does not retry a refused host key', async () => {

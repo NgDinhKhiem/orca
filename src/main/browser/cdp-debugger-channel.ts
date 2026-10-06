@@ -97,9 +97,11 @@ export class CdpDebuggerChannel {
     clientId: number,
     method: string,
     params: Record<string, unknown>,
-    msgSessionId?: string
+    msgSessionId?: string,
+    onSettled?: () => void
   ): void {
     if (this.webContents.isDestroyed()) {
+      onSettled?.()
       this.responder.sendError(clientId, 'Browser tab is no longer available', client)
       return
     }
@@ -107,12 +109,15 @@ export class CdpDebuggerChannel {
     try {
       this.sendDebuggerCommand(method, params, sessionId)
         .then((result) => {
+          onSettled?.()
           this.responder.sendResult(clientId, result, client)
         })
         .catch((err: Error) => {
+          onSettled?.()
           this.responder.sendError(clientId, err.message, client)
         })
     } catch (err) {
+      onSettled?.()
       this.responder.sendError(clientId, err instanceof Error ? err.message : String(err), client)
     }
   }

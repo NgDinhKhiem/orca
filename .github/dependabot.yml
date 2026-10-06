@@ -9,3 +9,18 @@ updates:
     allow:
       - dependency-name: '@vscode/ripgrep-universal'
     open-pull-requests-limit: 1
+  # Why: cloud Dockerfiles pin base images by digest; this keeps those digests current.
+  - package-ecosystem: docker
+    directories:
+      - /cloud/apps/relay
+      - /cloud/apps/push
+      - /cloud/apps/relay-fence-broker
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+  # Why: workflow actions are pinned to commit SHAs; this keeps the pins and their `# vN` comments current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5

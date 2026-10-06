@@ -14,6 +14,7 @@ import type {
   Worktree
 } from './types'
 import type { WorkspaceLineage, WorktreeLineage, WorktreeLineageWarning } from './lineage-types'
+import type { OrcaSetupTrustGrant } from '../orca-hook-trust'
 import type {
   WorktreeDefaultTabsLaunch,
   WorktreeSetupLaunch,
@@ -110,6 +111,8 @@ export type CreateWorktreeArgs = {
    *  legitimately contains `/` while the worktree directory must not. */
   branchNameOverride?: string
   setupDecision?: SetupDecision
+  /** Setup trust the creating client holds; the host runs worktree setup only for trusted content. */
+  setupTrust?: OrcaSetupTrustGrant
   sparseCheckout?: CreateSparseCheckoutRequest
   linkedIssue?: number
   linkedPR?: number
@@ -182,6 +185,9 @@ export type CreateWorktreeResult = {
     terminalHandle?: string
   }
   defaultTabs?: WorktreeDefaultTabsLaunch
+  /** Present when the new worktree's orca.yaml setup/defaultTabs commands were withheld because
+   *  that exact content is not trusted; the client prompts with it before launching. */
+  setupApproval?: WorktreeSetupApproval
   warning?: string
   baseFallback?: WorktreeCreateBaseFallback
   initialBaseStatus?: WorktreeBaseStatusEvent
@@ -196,6 +202,16 @@ export type CreateWorktreeResult = {
     surface?: 'visible' | 'background'
   }
   timing?: WorktreeCreateTiming
+}
+
+export type WorktreeSetupApproval = {
+  /** The worktree's own setup trust content, exactly as hashed. */
+  scriptContent: string
+  contentHash: string
+  /** Prepared runner to launch once approved; absent when no setup script would run. */
+  setup?: WorktreeSetupLaunch
+  /** Whether defaultTabs commands should run once approved. */
+  runDefaultTabCommands: boolean
 }
 
 export type WorktreeCreateBaseFallback = {

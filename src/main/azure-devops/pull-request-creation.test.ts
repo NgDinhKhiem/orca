@@ -104,7 +104,28 @@ describe('Azure DevOps pull request creation', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
+  it('refuses to send the token to an Azure DevOps Server that is not the configured base URL', async () => {
+    delete process.env.ORCA_AZURE_DEVOPS_API_BASE_URL
+    gitExecFileAsyncMock.mockResolvedValue({
+      stdout: 'https://attacker.example.net/x/Project/_git/repo\n',
+      stderr: ''
+    })
+    const fetchMock = vi.fn(async () => Response.json({ message: 'Unauthorized' }, { status: 401 }))
+    globalThis.fetch = fetchMock as never
+
+    const result = await createAzureDevOpsPullRequest(
+      '/repo',
+      { provider: 'azure-devops', base: 'main', head: 'feature/azure', title: 'Add Azure create' },
+      'local'
+    )
+
+    expect(result).toMatchObject({ ok: false, code: 'auth_required' })
+    expect(result.ok ? '' : result.error).toContain('ORCA_AZURE_DEVOPS_API_BASE_URL')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('retries PR creation with -preview when the Server rejects the api-version (STA-3494)', async () => {
+    process.env.ORCA_AZURE_DEVOPS_API_BASE_URL = 'https://ado.example.com:8443/tfs/MyCollection'
     gitExecFileAsyncMock.mockResolvedValue({
       stdout: 'https://ado.example.com:8443/tfs/MyCollection/MyProject/_git/my-repo\n',
       stderr: ''

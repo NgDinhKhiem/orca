@@ -122,6 +122,7 @@
     "google_compute_router.relay_gce_additional",
     "google_compute_router_nat.relay_gce",
     "google_compute_router_nat.relay_gce_additional",
+    "google_compute_ssl_policy.relay_gce",
     "google_compute_subnetwork.relay_gce",
     "google_compute_subnetwork.relay_gce_additional",
     "google_compute_target_https_proxy.relay_gce",

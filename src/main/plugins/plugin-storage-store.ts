@@ -1,12 +1,15 @@
-import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { isUnreadableError, writeSecureFile } from '../../shared/secure-file'
 import { isQualifiedPluginKey } from '../../shared/plugins/plugin-manifest'
 import {
   PLUGIN_STORAGE_KEY_LIMIT,
   PLUGIN_STORAGE_TOTAL_MAX_BYTES,
   PLUGIN_STORAGE_VALUE_MAX_BYTES
 } from '../../shared/plugins/plugin-host-api'
+import {
+  pluginDataRecordFiles,
+  type PluginDataRecordFile,
+  type PluginDataRecordFormat
+} from './plugin-data-record-file'
 
 /**
  * Per-plugin JSON key-value persistence backing both `storage.*` (plugin
@@ -27,6 +30,22 @@ export function pluginDataDir(pluginsDataDir: string, qualifiedKey: string): str
 
 export type PluginKvWriteResult = { ok: true } | { ok: false; error: string }
 
+const KV_RECORD_FORMAT: PluginDataRecordFormat = {
+  prefix: '{',
+  suffix: '}',
+  entriesOf: (parsed) =>
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? Object.fromEntries(Object.entries(parsed))
+      : null
+}
+
+const KV_WRITE_ERRORS = {
+  unreadable: UNREADABLE_STORE_ERROR,
+  keyLimit: `storage exceeds the ${PLUGIN_STORAGE_KEY_LIMIT}-key limit`,
+  sizeLimit: `storage exceeds ${PLUGIN_STORAGE_TOTAL_MAX_BYTES} bytes`
+}
+
+/** A handle onto the process-wide cache for one plugin file; cheap enough to build per request. */
 export class PluginKvStore {
   private readonly filePath: string
 
@@ -38,40 +57,26 @@ export class PluginKvStore {
     this.filePath = join(pluginDataDir(pluginsDataDir, qualifiedKey), fileName)
   }
 
-  /** `null` means the file exists and this process may not read it - which is never `{}`. */
-  private read(): Record<string, unknown> | null {
-    try {
-      if (!existsSync(this.filePath)) {
-        return {}
-      }
-      if (statSync(this.filePath).size > PLUGIN_STORAGE_TOTAL_MAX_BYTES) {
-        return {}
-      }
-      const parsed: unknown = JSON.parse(readFileSync(this.filePath, 'utf8'))
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>
-      }
-    } catch (error) {
-      // Being denied the read is not evidence of corruption. Returning `{}` here would make
-      // the next set()/delete() write a file holding only that one key, dropping the rest.
-      if (isUnreadableError(error)) {
-        return null
-      }
-      // Corrupt files reset to empty rather than wedging the plugin.
-    }
-    return {}
+  private file(): PluginDataRecordFile {
+    return pluginDataRecordFiles.get(this.filePath, KV_RECORD_FORMAT, 'debounced')
   }
 
   get(key: string): unknown {
-    return this.read()?.[key]
+    const json = this.file().read()?.get(key)
+    // Parsed per call, as the file read was: callers can never mutate the cached value.
+    return json === undefined ? undefined : JSON.parse(json)
   }
 
   getAll(): Record<string, unknown> {
-    return this.read() ?? {}
+    const entries = this.file().read() ?? new Map<string, string>()
+    return Object.fromEntries([...entries].map(([key, json]) => [key, JSON.parse(json)]))
   }
 
   keys(): string[] {
-    return Object.keys(this.read() ?? {})
+    // Through an object so key order matches the parsed file's (integer-like keys first).
+    return Object.keys(
+      Object.fromEntries([...(this.file().read()?.keys() ?? [])].map((key) => [key, 0]))
+    )
   }
 
   set(key: string, value: unknown): PluginKvWriteResult {
@@ -87,31 +92,10 @@ export class PluginKvStore {
     if (Buffer.byteLength(serialized, 'utf8') > PLUGIN_STORAGE_VALUE_MAX_BYTES) {
       return { ok: false, error: `value exceeds ${PLUGIN_STORAGE_VALUE_MAX_BYTES} bytes` }
     }
-    const settings = this.read()
-    if (!settings) {
-      return { ok: false, error: UNREADABLE_STORE_ERROR }
-    }
-    if (!Object.hasOwn(settings, key) && Object.keys(settings).length >= PLUGIN_STORAGE_KEY_LIMIT) {
-      return { ok: false, error: `storage exceeds the ${PLUGIN_STORAGE_KEY_LIMIT}-key limit` }
-    }
-    settings[key] = value
-    const nextFile = JSON.stringify(settings, null, 2)
-    if (Buffer.byteLength(nextFile, 'utf8') > PLUGIN_STORAGE_TOTAL_MAX_BYTES) {
-      return { ok: false, error: `storage exceeds ${PLUGIN_STORAGE_TOTAL_MAX_BYTES} bytes` }
-    }
-    writeSecureFile(this.filePath, nextFile)
-    return { ok: true }
+    return this.file().set(key, serialized, KV_WRITE_ERRORS)
   }
 
   delete(key: string): void {
-    const settings = this.read()
-    if (!settings) {
-      // Rewriting what we could not read would drop every other key in the store.
-      return
-    }
-    if (Object.hasOwn(settings, key)) {
-      delete settings[key]
-      writeSecureFile(this.filePath, JSON.stringify(settings, null, 2))
-    }
+    this.file().delete(key)
   }
 }

@@ -20,6 +20,8 @@ function humanizePermission(permission: string): string {
   switch (permission) {
     case 'media':
       return 'camera or microphone access'
+    case 'clipboard-read':
+      return 'permission to read your clipboard'
     case 'pointerLock':
       return 'pointer lock'
     case 'storage-access':

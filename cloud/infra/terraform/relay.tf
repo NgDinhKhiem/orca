@@ -230,6 +230,12 @@ resource "google_cloud_run_v2_service" "relay" {
         value = "${var.auth_base_url}/.well-known/jwks.json"
       }
 
+      # Cloud Run appends only the client to X-Forwarded-For, so the last hop is the caller.
+      env {
+        name  = "ORCA_RELAY_TRUSTED_PROXY_HOPS"
+        value = "0"
+      }
+
       env {
         name  = "ORCA_RELAY_ROLE"
         value = "director"
@@ -485,6 +491,12 @@ resource "google_cloud_run_v2_service" "relay_cell" {
       env {
         name  = "ORCA_RELAY_JWKS_URL"
         value = "${var.auth_base_url}/.well-known/jwks.json"
+      }
+
+      # Cloud Run appends only the client to X-Forwarded-For, so the last hop is the caller.
+      env {
+        name  = "ORCA_RELAY_TRUSTED_PROXY_HOPS"
+        value = "0"
       }
 
       env {

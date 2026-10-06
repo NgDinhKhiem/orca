@@ -26,7 +26,8 @@ export async function getStagedCommitContext(
   let stagedPatch = ''
   try {
     const patchResult = await gitExecFileAsync(
-      ['diff', '--cached', '--patch', '--minimal', '--no-color', '--no-ext-diff'],
+      // Why: repo-config diff drivers (external, textconv) are commands from the opened folder.
+      ['diff', '--cached', '--patch', '--minimal', '--no-color', '--no-ext-diff', '--no-textconv'],
       {
         ...gitOptionsForWorktree(worktreePath, options),
         maxBuffer: MAX_STAGED_COMMIT_CONTEXT_BYTES

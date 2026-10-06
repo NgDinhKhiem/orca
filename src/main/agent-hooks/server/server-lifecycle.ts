@@ -1,6 +1,7 @@
 import { parsePaneKey } from '../../../shared/stable-pane-id'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
+import { secretsMatch } from '../../../shared/constant-time-secret-compare'
 
 import {
   CLAUDE_STATUSLINE_PATHNAME,
@@ -52,7 +53,7 @@ export abstract class AgentHookServerLifecycle extends AgentHookServerStatusHook
         return
       }
       // Why: authenticate before spending work reading an untrusted body.
-      if (req.headers['x-orca-agent-hook-token'] !== this.token) {
+      if (!secretsMatch(req.headers['x-orca-agent-hook-token'], this.token)) {
         res.writeHead(403)
         res.end()
         return

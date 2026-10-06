@@ -3,6 +3,7 @@ import { writeRuntimeMetadata } from '../runtime-metadata'
 import type { RpcMessageContext } from '../rpc/transport'
 import type { RpcRequest, RpcResponse } from '../rpc/core'
 import { errorResponse } from '../rpc/errors'
+import { secretsMatch } from '../../../shared/constant-time-secret-compare'
 import { RuntimeRpcBinaryRouting } from './runtime-rpc-binary-routing'
 import { classifyRuntimeLongPoll, type RuntimeLongPollClass } from './runtime-rpc-long-poll'
 
@@ -128,7 +129,7 @@ export class RuntimeRpcRequestAdmission extends RuntimeRpcBinaryRouting {
     if (typeof request.authToken !== 'string' || request.authToken.length === 0) {
       return { error: this.buildError(request.id, 'unauthorized', 'Missing auth token') }
     }
-    if (request.authToken !== this.authToken) {
+    if (!secretsMatch(request.authToken, this.authToken)) {
       return { error: this.buildError(request.id, 'unauthorized', 'Invalid auth token') }
     }
 

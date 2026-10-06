@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS build
+FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS build
 WORKDIR /workspace
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
@@ -7,9 +7,9 @@ RUN pnpm install --frozen-lockfile
 COPY apps/relay-fence-broker apps/relay-fence-broker
 RUN pnpm --filter @orca-cloud/relay-fence-broker build
 
-FROM hashicorp/terraform:1.15.8 AS terraform
+FROM hashicorp/terraform:1.15.8@sha256:7ae513256f7ce67879e218ae8593d6fbe216ec9e123abe6c94e4e10704857963 AS terraform
 
-FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:slim@sha256:be4876b4311056bf3ce236a14a7dea1288e70b7cfea2454ea15e4165c819921f
 ARG ORCA_RELAY_FENCE_IMAGE_COMMIT
 RUN test "$(printf '%s' "${ORCA_RELAY_FENCE_IMAGE_COMMIT}" | grep -E '^[a-f0-9]{40}$')"
 ENV NODE_ENV=production

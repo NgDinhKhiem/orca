@@ -1,6 +1,7 @@
 import {
   interactiveOutputCharsByPty,
   lastInputAtByPty,
+  markRendererPtyExited,
   SYNTHETIC_KILL_EXIT_DUPLICATE_WINDOW_MS
 } from './visibility-state'
 import { allocatePtyLifecycleSequence } from '../host-env/types'
@@ -122,6 +123,9 @@ export function finalizePtyExitForRenderer(
   session: PtyIpcSession,
   payload: { id: string; code: number; incarnationId?: string }
 ): void {
+  // Why: the drop warning is once per PTY lifetime; an exited id never warns again.
+  session.pendingDataDropWarnedPtys.delete(payload.id)
+  markRendererPtyExited(payload.id)
   if (!session.mainWindow || session.mainWindow.isDestroyed()) {
     session.rendererCreditBeforeExitByPty.delete(payload.id)
     return

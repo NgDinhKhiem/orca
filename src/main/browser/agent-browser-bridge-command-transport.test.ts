@@ -115,7 +115,7 @@ describe('AgentBrowserBridge', () => {
     )
     expect(snapshotCall![1]).toContain('--cdp')
     const cdpIdx = (snapshotCall![1] as string[]).indexOf('--cdp')
-    expect((snapshotCall![1] as string[])[cdpIdx + 1]).toBe('9222')
+    expect((snapshotCall![1] as string[])[cdpIdx + 1]).toBe('ws://127.0.0.1:9222')
 
     await bridge.click('@e1')
     await bridge.scroll('down')
@@ -130,7 +130,7 @@ describe('AgentBrowserBridge', () => {
       expect(call).toBeDefined()
       const args = call![1] as string[]
       expect(args).toContain('--cdp')
-      expect(args[args.indexOf('--cdp') + 1]).toBe('9222')
+      expect(args[args.indexOf('--cdp') + 1]).toBe('ws://127.0.0.1:9222')
     }
   })
 

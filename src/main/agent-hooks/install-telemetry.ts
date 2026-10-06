@@ -1,29 +1,43 @@
 import type { HookInstallAgent } from '../../shared/telemetry-events'
+import type { AgentHookInstallErrorKind } from '../../shared/telemetry-daemon-event-schemas'
 import { track } from '../telemetry/client'
 
-const ERROR_MESSAGE_MAX_LEN = 200
+const ERRNO_CODE = /^E[A-Z0-9]{1,15}$/
 
-function describeError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message
+const KIND_BY_ERRNO_CODE: Readonly<Record<string, AgentHookInstallErrorKind>> = {
+  EACCES: 'permission_denied',
+  EPERM: 'permission_denied',
+  ENOENT: 'not_found',
+  ENOTDIR: 'not_found',
+  EROFS: 'read_only_filesystem',
+  ENOSPC: 'disk_full',
+  EDQUOT: 'disk_full',
+  EBUSY: 'file_busy'
+}
+
+function errnoCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return undefined
   }
-  if (typeof error === 'string') {
-    return error
+  const code = error.code
+  return typeof code === 'string' && ERRNO_CODE.test(code) ? code : undefined
+}
+
+function classifyInstallError(error: unknown): {
+  error_kind: AgentHookInstallErrorKind
+  error_code?: string
+} {
+  const code = errnoCode(error)
+  if (code) {
+    return { error_kind: KIND_BY_ERRNO_CODE[code] ?? 'other_system_error', error_code: code }
   }
-  try {
-    const json = JSON.stringify(error)
-    return typeof json === 'string' ? json : String(error)
-  } catch {
-    return String(error)
-  }
+  // A hand-edited config the installer cannot parse.
+  return { error_kind: error instanceof SyntaxError ? 'invalid_config' : 'unknown' }
 }
 
 export function recordManagedHookInstallFailure(agent: HookInstallAgent, error: unknown): void {
   try {
-    track('agent_hook_install_failed', {
-      agent,
-      error_message: describeError(error).slice(0, ERROR_MESSAGE_MAX_LEN)
-    })
+    track('agent_hook_install_failed', { agent, ...classifyInstallError(error) })
   } catch (telemetryError) {
     console.error('[agent-hooks] Failed to record install-failure telemetry:', telemetryError)
   }

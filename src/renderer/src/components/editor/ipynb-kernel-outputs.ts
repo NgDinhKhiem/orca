@@ -10,9 +10,48 @@ export type LiveOutputs = {
   clearOnNextOutput: boolean
 }
 
-/** Applies terminal-style `\r` rewrites (progress bars), keeping a trailing `\r` for the next chunk. */
+/** Applies terminal-style `\r` rewrites (progress bars), keeping trailing `\r`s for the next chunk. */
 export function collapseCarriageReturns(text: string): string {
-  return text.replace(/\r+\n/g, '\n').replace(/^[^\n]*\r(?=[^\n])/gm, '')
+  // Why: a trailing `\r\r` must survive whole, or a `\n` in the next chunk erases its line.
+  return text.replace(/\r+\n/g, '\n').replace(/^[^\n]*\r(?=[^\n\r])/gm, '')
+}
+
+/** Collapsed stream text split at its last `\n`; only `tail` can still be rewritten by a `\r`. */
+type StreamText = { finished: string; tail: string; tailEndsWithCr: boolean }
+
+// Why: reading a concatenated string flattens (copies) it, so appends track the parts per
+// output object instead of touching its whole `text`, keeping a long stream linear.
+const streamTexts = new WeakMap<NotebookOutput, StreamText>()
+
+function splitStreamText(collapsed: string): StreamText {
+  const lineStart = collapsed.lastIndexOf('\n') + 1
+  return {
+    finished: collapsed.slice(0, lineStart),
+    tail: collapsed.slice(lineStart),
+    tailEndsWithCr: collapsed.endsWith('\r')
+  }
+}
+
+function appendStreamChunk(parts: StreamText, chunk: string): StreamText {
+  if (!parts.tailEndsWithCr && !chunk.includes('\r')) {
+    const lineStart = chunk.lastIndexOf('\n') + 1
+    return lineStart === 0
+      ? { ...parts, tail: parts.tail + chunk }
+      : {
+          finished: parts.finished + parts.tail + chunk.slice(0, lineStart),
+          tail: chunk.slice(lineStart),
+          tailEndsWithCr: false
+        }
+  }
+  // Collapsed text holds `\r` only in its last line, so finished lines never change.
+  const rewritten = splitStreamText(collapseCarriageReturns(parts.tail + chunk))
+  return { ...rewritten, finished: parts.finished + rewritten.finished }
+}
+
+function streamOutput(base: NotebookOutput, parts: StreamText): NotebookOutput {
+  const output = { ...base, text: parts.finished + parts.tail }
+  streamTexts.set(output, parts)
+  return output
 }
 
 function displayId(value: unknown): unknown {
@@ -61,20 +100,20 @@ export function applyKernelOutput<T extends LiveOutputs>(
   const outputs = live.clearOnNextOutput ? [] : live.outputs
   const last = outputs.at(-1)
   if (type === 'stream' && last?.output_type === 'stream' && last.name === content.name) {
-    const text = collapseCarriageReturns(`${String(last.text)}${String(content.text ?? '')}`)
+    const parts = streamTexts.get(last) ?? splitStreamText(String(last.text))
+    const text = appendStreamChunk(parts, String(content.text ?? ''))
     return {
       ...live,
-      outputs: [...outputs.slice(0, -1), { ...last, text }],
+      outputs: [...outputs.slice(0, -1), streamOutput(last, text)],
       clearOnNextOutput: false
     }
   }
   const output =
     type === 'stream'
-      ? {
-          output_type: type,
-          name: content.name ?? 'stdout',
-          text: collapseCarriageReturns(String(content.text ?? ''))
-        }
+      ? streamOutput(
+          { output_type: type, name: content.name ?? 'stdout' },
+          splitStreamText(collapseCarriageReturns(String(content.text ?? '')))
+        )
       : toOutput(type, content)
   return { ...live, outputs: [...outputs, output], clearOnNextOutput: false }
 }

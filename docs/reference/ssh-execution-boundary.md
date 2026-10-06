@@ -54,6 +54,14 @@ On an SSH host, `orca` is a shim (`~/.orca-relay/bin/orca`) that proxies **back 
 
 > When the client disconnects, every `orca …` command run on the SSH host fails with `No owning Orca client is connected to the relay`. The PTY stays `live`; its control plane does not.
 
+The SSH host is a less-trusted principal than the client's own user, so the bridge
+(`evaluateSshCliBridgeRequest` in `src/main/ssh/ssh-remote-cli-command-policy.ts`) is deny-by-default:
+only the commands in `src/shared/ssh-cli-bridge-allowlist.ts` run — orchestration messaging, `status`,
+skill guides, Linear (stdin bodies only), help, and `terminal list` scoped in main to that SSH
+target's own terminals. Execution-host selectors (`--host`, `--environment`, `--pairing-code`,
+`--on`) are refused. Anything that would create or drive work on the client — terminals, worktrees,
+repos, browser, desktop control, workers — must be run on the client.
+
 Orchestration state (Runs, Tasks, Dispatches, mailboxes) is client-resident for the same reason. An agent on an SSH host should not depend on `orca` for anything it must finish while you are away. **Commit and push early** — unpushed work on a remote box is unavailable to the client until it reconnects.
 
 ## Distinguishing `unverifiable` from `exited`

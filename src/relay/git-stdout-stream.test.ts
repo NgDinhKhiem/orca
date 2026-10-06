@@ -17,6 +17,7 @@ vi.mock('../shared/child-process/process-tree-termination', async (importActual)
   forceTerminateProcessTree: terminateMock
 }))
 
+import { GIT_FSMONITOR_DISABLED_ARGS } from '../shared/git-repo-config-command-guard'
 import { GitAdmissionScheduler } from '../shared/git-admission-scheduler'
 import { GIT_READ_TIMEOUT_MS } from '../shared/git-command-timeout'
 import {
@@ -79,7 +80,7 @@ describe('streamRelayGitStdout', () => {
     expect(spawnMock).toHaveBeenCalledWith(
       expect.objectContaining({
         program: 'git',
-        args: ['status', '--porcelain=v2'],
+        args: [...GIT_FSMONITOR_DISABLED_ARGS, 'status', '--porcelain=v2'],
         cwd: '/repo',
         env: expect.objectContaining({ GIT_OPTIONAL_LOCKS: '0' }),
         stdio: ['ignore', 'pipe', 'pipe'],

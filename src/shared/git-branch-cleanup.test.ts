@@ -34,9 +34,9 @@ function baseProofResponses(
         'rev-parse --verify --quiet target^{tree}': 'target-tree\n',
         'rev-list --right-only --merges --count target...refs/heads/feature/test': '1\n',
         'merge-base target refs/heads/feature/test': 'base\n',
-        'diff base refs/heads/feature/test': 'branch-diff',
+        'diff --no-ext-diff --no-textconv base refs/heads/feature/test': 'branch-diff',
         'rev-list --ancestry-path --max-count=201 base..target': 'squash\n',
-        'show --format= squash': 'squash-diff',
+        'show --no-ext-diff --no-textconv --format= squash': 'squash-diff',
         'merge-tree --write-tree squash refs/heads/feature/test': 'squash-tree\n',
         'rev-parse --verify --quiet squash^{tree}': 'squash-tree\n'
       }[key] ??
@@ -152,7 +152,13 @@ describe('branchHasNoUnmergedChangesOnAnyTarget', () => {
       )
     ).resolves.toBe(false)
 
-    expect(runGit).not.toHaveBeenCalledWith(['show', '--format=', 'commit-0'])
+    expect(runGit).not.toHaveBeenCalledWith([
+      'show',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--format=',
+      'commit-0'
+    ])
   })
 
   it('preserves when patch-id cannot be computed', async () => {

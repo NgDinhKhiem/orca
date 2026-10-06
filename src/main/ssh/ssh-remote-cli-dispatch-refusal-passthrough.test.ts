@@ -16,7 +16,8 @@ import { runRemoteOrcaCli } from './ssh-remote-orca-cli'
 
 // Why: the SSH bridge captures the host CLI child's stdout and exit code without reparsing; this
 // pins that a typed refusal envelope and its nonzero exit reach the remote agent unchanged.
-it('relays typed dispatch refusal codes from the host CLI unchanged', async () => {
+// `orchestration send` stands in for `dispatch`, which an SSH host may no longer run.
+it('relays typed orchestration refusal codes from the host CLI unchanged', async () => {
   const child = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter
     stderr: EventEmitter
@@ -32,9 +33,9 @@ it('relays typed dispatch refusal codes from the host CLI unchanged', async () =
     id: 'rpc_1',
     ok: false,
     error: {
-      code: 'task_not_startable',
-      message: 'Task task_1 is pending; only ready tasks can be dispatched',
-      data: { taskId: 'task_1', status: 'pending', unmetDependencies: ['task_0'] }
+      code: 'consumer_fenced',
+      message: 'This process no longer owns dispatch_1',
+      data: { dispatchId: 'dispatch_1' }
     },
     _meta: { runtimeId: 'runtime_1' }
   }
@@ -42,7 +43,7 @@ it('relays typed dispatch refusal codes from the host CLI unchanged', async () =
   const resultPromise = runRemoteOrcaCli(
     new OrcaRuntimeService(),
     {
-      argv: ['orchestration', 'dispatch', '--task', 'task_1', '--to', 'term_w', '--json'],
+      argv: ['orchestration', 'send', '--to', 'term_c', '--subject', 'done', '--json'],
       cwd: '/home/alice/repo',
       env: { ORCA_TERMINAL_HANDLE: 'term_ssh' }
     },

@@ -39,7 +39,7 @@ Object.defineProperty(globalThis, 'window', {
 })
 
 const session = await import('./ipynb-kernel-session')
-const { getCellRun, getSession } = await import('./ipynb-kernel-store')
+const { getCellRun, getSession, store } = await import('./ipynb-kernel-store')
 
 function frame(value: KernelFrame): void {
   emitFrame({ filePath: FILE, frame: value })
@@ -126,6 +126,53 @@ describe('notebook kernel session', () => {
     expect(notebookApi.execute).toHaveBeenCalledTimes(2)
     expect(getCellRun(FILE, 'c')).toBeUndefined()
     expect(getCellRun(FILE, 'b')?.finishedAt).not.toBeNull()
+  })
+
+  it('coalesces a burst of output frames into one store update', async () => {
+    vi.useFakeTimers()
+    const updates: number[] = []
+    const unsubscribe = store.subscribe(() => updates.push(1))
+    try {
+      await session.runCells(FILE, [{ key: 'a', code: 'for i in range(100): print(i)' }], null)
+      updates.length = 0
+      for (let index = 0; index < 100; index += 1) {
+        frame({ type: 'stream', content: { name: 'stdout', text: `${index}\n` } })
+      }
+      vi.advanceTimersByTime(100)
+      expect(updates).toHaveLength(1)
+      expect(getCellRun(FILE, 'a')?.outputs).toEqual([
+        {
+          output_type: 'stream',
+          name: 'stdout',
+          text: Array.from({ length: 100 }, (_, index) => `${index}\n`).join('')
+        }
+      ])
+    } finally {
+      unsubscribe()
+      vi.useRealTimers()
+    }
+  })
+
+  it('writes pending output before the run finishes or the kernel restarts', async () => {
+    vi.useFakeTimers()
+    try {
+      await session.runCells(FILE, [{ key: 'a', code: 'print(1)' }], null)
+      frame({ type: 'stream', content: { name: 'stdout', text: 'before done\n' } })
+      frame({ type: 'done', status: 'ok', execution_count: 1 })
+      expect(getCellRun(FILE, 'a')?.outputs).toEqual([
+        { output_type: 'stream', name: 'stdout', text: 'before done\n' }
+      ])
+
+      await session.runCells(FILE, [{ key: 'b', code: 'while True: print(2)' }], null)
+      frame({ type: 'stream', content: { name: 'stdout', text: 'before restart\n' } })
+      session.restartKernel(FILE)
+      vi.advanceTimersByTime(100)
+      expect(getCellRun(FILE, 'b')?.outputs).toEqual([
+        { output_type: 'stream', name: 'stdout', text: 'before restart\n' }
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('reports a dead kernel in the running cell and drops the queue', async () => {

@@ -255,14 +255,15 @@ export class HistoryManager {
   }
 
   async closeSession(sessionId: string, exitCode: number): Promise<void> {
+    // Why: session is dead; without this a poisoned id leaks forever (sessionIds never reused),
+    // including one disabled before it ever got a writer (recovery-protected reattach).
+    this.disabledSessions.delete(sessionId)
     const writer = this.writers.get(sessionId)
     if (!writer) {
       return
     }
 
     this.writers.delete(sessionId)
-    // Why: session is dead; without this a transient-error-poisoned id leaks forever (sessionIds never reused).
-    this.disabledSessions.delete(sessionId)
     try {
       updateTerminalHistoryMeta(writer.dir, { endedAt: new Date().toISOString(), exitCode })
     } catch (err) {

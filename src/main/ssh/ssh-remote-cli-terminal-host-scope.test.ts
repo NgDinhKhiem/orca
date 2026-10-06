@@ -51,7 +51,18 @@ describe('remote CLI bridge terminal list', () => {
 
     const result = await runRemoteOrcaCli(
       runtime,
-      { argv: ['terminal', 'list', '--json'], cwd: '/home/alice/repo', env: {} },
+      {
+        argv: ['terminal', 'list', '--json'],
+        cwd: '/home/alice/repo',
+        env: {},
+        // Why: the listing is scoped to the calling SSH target, so the caller must carry one.
+        runtimeAuthority: {
+          kind: 'ssh',
+          targetId: 'box-1',
+          connectionIncarnation: 'incarnation-1',
+          attachmentId: 'attachment-1'
+        }
+      },
       LEGACY_FALLBACK_OPTIONS
     )
 

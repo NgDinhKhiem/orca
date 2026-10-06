@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  writeSecureJsonFile,
+  writeSecureFile,
   hardenExistingSecureFile,
   isUnreadableError
 } from '../../shared/secure-file'
@@ -17,11 +17,15 @@ type RecordEntry = DeliveredNotificationIdentity & { dismissedThrough: number; e
 const LIMIT = 4096
 const RETENTION_MS = 7 * 86400_000
 const STALE_WRITE_TEMP_AGE_MS = 86400_000
+// Why: each write is a whole-file rewrite (and icacls spawns on Windows); bursts share one.
+const WRITE_DEBOUNCE_MS = 1000
 
 export class MobileNotificationDismissalStore {
   private readonly path: string
   private entries: RecordEntry[] = []
   private unreadable = false
+  private dirty = false
+  private writeTimer: ReturnType<typeof setTimeout> | null = null
   constructor(userDataPath: string) {
     this.path = join(userDataPath, 'mobile-notification-dismissals.json')
     // Why: a write killed between writeFile and rename (e.g. a hung icacls, #20497) orphans its temp forever.
@@ -78,10 +82,40 @@ export class MobileNotificationDismissalStore {
       })
     }
     next = next.slice(-LIMIT)
-    if (!this.unreadable) {
-      writeSecureJsonFile(this.path, next)
-    }
     this.entries = next
+    if (!this.unreadable) {
+      this.scheduleWrite()
+    }
+  }
+
+  /** Writes a pending change now; the owner calls this on quit. */
+  flush(): void {
+    if (this.writeTimer !== null) {
+      clearTimeout(this.writeTimer)
+      this.writeTimer = null
+    }
+    if (!this.dirty) {
+      return
+    }
+    try {
+      writeSecureFile(this.path, JSON.stringify(this.entries))
+      this.dirty = false
+    } catch (error) {
+      // Kept dirty: the next record or the quit flush retries.
+      console.warn('[mobile-notifications] failed to persist dismissals:', error)
+    }
+  }
+
+  private scheduleWrite(): void {
+    this.dirty = true
+    if (this.writeTimer !== null) {
+      return
+    }
+    this.writeTimer = setTimeout(() => {
+      this.writeTimer = null
+      this.flush()
+    }, WRITE_DEBOUNCE_MS)
+    this.writeTimer.unref?.()
   }
 
   reconcile(delivered: readonly DeliveredNotificationIdentity[]): DeliveredNotificationIdentity[] {

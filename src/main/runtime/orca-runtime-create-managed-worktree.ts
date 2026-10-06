@@ -181,12 +181,12 @@ export class OrcaRuntimeWithCreateManagedWorktree extends OrcaRuntimeWithGetWork
         rearm,
         timing
       })
-    const settings = createSettings
     const { lineage, workspaceLineage, warnings: lineageWarnings } = metadataResult
 
     let {
       setup,
       defaultTabs,
+      setupApproval,
       warning,
       effectiveDecision,
       hookFound,
@@ -196,12 +196,13 @@ export class OrcaRuntimeWithCreateManagedWorktree extends OrcaRuntimeWithGetWork
       request: args,
       repo,
       worktreePath,
-      settings,
+      settings: createSettings,
       runtimeTarget: this.getLocalGitExecutionOptionArgs(repo)[0],
       shouldUseSetupRunner:
         this.authoritativeWindowId !== null ||
         Boolean(effectiveStartup) ||
         Boolean(this.ptyController?.spawn),
+      trustStore: this.store,
       warning: includeCopyWarning
     })
 
@@ -298,6 +299,7 @@ export class OrcaRuntimeWithCreateManagedWorktree extends OrcaRuntimeWithGetWork
           }
         : {}),
       ...(defaultTabs ? { defaultTabs } : {}),
+      ...(setupApproval ? { setupApproval } : {}),
       ...(warning ? { warning } : {}),
       ...(addResult.localBaseRefRefresh
         ? { localBaseRefRefresh: addResult.localBaseRefRefresh }

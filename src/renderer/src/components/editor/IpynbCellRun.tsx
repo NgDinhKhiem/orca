@@ -2,10 +2,22 @@ import { useMemo } from 'react'
 import { formatToolDuration } from '../../../../shared/native-chat-tool-identity'
 import { IpynbCellOutputs } from './IpynbCellOutputs'
 import { IpynbRunPrompt } from './IpynbCellToolbar'
+import type { NotebookOutput } from './ipynb-kernel-outputs'
 import { useCellRun } from './ipynb-kernel-store'
 import { parseIpynbOutput, type IpynbCell, type IpynbOutput } from './ipynb-parse'
 
 type CellRunProps = { filePath: string; cellKey: string }
+
+// Why: each streamed batch replaces only the last live output, so earlier outputs reuse their
+// parse and keep their identity, letting their rendered views skip the update.
+const parsedLiveOutputs = new WeakMap<NotebookOutput, IpynbOutput | null>()
+
+function parseLiveOutput(output: NotebookOutput): IpynbOutput | null {
+  if (!parsedLiveOutputs.has(output)) {
+    parsedLiveOutputs.set(output, parseIpynbOutput(output))
+  }
+  return parsedLiveOutputs.get(output) ?? null
+}
 
 /** The gutter for a code cell, reflecting its run in the notebook's kernel session. */
 export function IpynbCellRunPrompt({
@@ -44,7 +56,7 @@ export function IpynbCellRunOutputs({
             ...cell,
             executionCount: run.executionCount,
             outputs: run.outputs
-              .map(parseIpynbOutput)
+              .map(parseLiveOutput)
               .filter((output): output is IpynbOutput => output !== null)
           }
         : null,

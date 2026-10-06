@@ -2,6 +2,11 @@ import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }))
+// Why: these mocks match on the caller's argv; the guard prefix is covered by its routing tests.
+vi.mock('../../shared/git-repo-config-command-guard', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  withGitRepoConfigCommandGuard: (args: readonly string[]) => [...args]
+}))
 vi.mock('node:child_process', () => ({
   execFile: execFileMock,
   execFileSync: vi.fn(),

@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mkdtempSync, rmSync, chmodSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, chmodSync, writeFileSync } from 'node:fs'
 import { HistoryManager } from './history-manager'
 import type { TerminalSnapshot, TerminalModes } from './types'
 import { getHistorySessionDirName } from './history-paths'
@@ -75,6 +75,20 @@ describe('HistoryManager disabledSessions stays bounded (leak regression)', () =
       expect(mgr.isSessionDisabled('sess-1')).toBe(false)
     }
   )
+
+  it('clears the disabled flag of a recovery-protected session that never got a writer', async () => {
+    for (let i = 0; i < 20; i++) {
+      const sessionId = `protected-${i}`
+      const sessionDir = join(dir, getHistorySessionDirName(sessionId))
+      mkdirSync(sessionDir, { recursive: true })
+      // A failed recovery quarantine leaves this marker; warm reattach then refuses a writer.
+      writeFileSync(join(sessionDir, '.unreadable-recovery'), '')
+      mgr.registerWriter(sessionId)
+      expect(mgr.isSessionDisabled(sessionId)).toBe(true)
+      await mgr.closeSession(sessionId, 0)
+    }
+    expect(mgr.disabledSessionCount()).toBe(0)
+  })
 
   it.skipIf(process.platform === 'win32')(
     'does not accumulate disabled ids across many poisoned-then-closed sessions',

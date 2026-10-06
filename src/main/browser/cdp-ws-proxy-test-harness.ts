@@ -23,6 +23,7 @@ type MockDebugger = {
 // and tsgo reports TS2883.
 export type MockWebContents = {
   webContents: {
+    id: number
     debugger: MockDebugger
     isDestroyed: () => boolean
     isCrashed: () => boolean
@@ -37,6 +38,8 @@ export type MockWebContents = {
   destroy: () => void
   emit: (event: string, ...args: unknown[]) => void
 }
+
+let nextMockWebContentsId = 1
 
 export function createMockWebContents(): MockWebContents {
   const listeners = new Map<string, DebuggerListener[]>()
@@ -71,6 +74,7 @@ export function createMockWebContents(): MockWebContents {
 
   return {
     webContents: {
+      id: nextMockWebContentsId++,
       debugger: debuggerObj,
       isDestroyed: () => destroyed,
       isCrashed: () => false,

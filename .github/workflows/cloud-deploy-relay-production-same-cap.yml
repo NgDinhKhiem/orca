@@ -94,11 +94,11 @@ jobs:
     steps:
       # Full history: the canary authority a batch verifies is sealed at an ancestor commit, and
       # the provenance check fails closed on a commit a shallow clone left out.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 24 }
 
       - id: wave
@@ -125,7 +125,7 @@ jobs:
 
       - name: Download exact prior canary authority
         if: ${{ inputs.mode == 'batch-apply' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: relay-same-cap-canary-${{ inputs.canary-run-id }}
           path: ${{ runner.temp }}/relay-same-cap-canary
@@ -358,9 +358,9 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2204
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 24 }
 
       # Its pace checks are what let a batch drain faster than the default; a missing artifact
@@ -368,27 +368,34 @@ jobs:
       # as cell_1 uploaded it, so a padded cell-ids input cannot miss it.
       - name: Download the canary cell's shadow health verdict
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: relay-same-cap-shadow-gate-${{ fromJSON(needs.gate.outputs.cells)[0] }}-${{ github.run_id }}.json
           path: ${{ runner.temp }}/relay-same-cap-shadow-gate
 
       - name: Seal exact successful canary authority
+        env:
+          TARGET_DIGEST: ${{ inputs.target-image-digest }}
+          ROLLBACK_DIGEST: ${{ inputs.rollback-image-digest }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DRAIN_PACE_WINDOW_MS: ${{ inputs.drain-pace-window-ms }}
+          SELECTOR_GENERATION: ${{ inputs.expected-selector-generation }}
+          REHOME_GENERATION: ${{ inputs.expected-rehome-generation }}
         run: |
           mkdir -p "${RUNNER_TEMP}/relay-same-cap-canary"
           node dev/scripts/relay-production-same-cap-wave.mjs create-canary \
             --cell-id "${{ fromJSON(needs.gate.outputs.cells)[0] }}" \
-            --target-digest "${{ inputs.target-image-digest }}" \
-            --rollback-digest "${{ inputs.rollback-image-digest }}" \
-            --confirmation "${{ inputs.confirmation }}" \
-            --drain-pace-window-ms "${{ inputs.drain-pace-window-ms }}" \
+            --target-digest "${TARGET_DIGEST}" \
+            --rollback-digest "${ROLLBACK_DIGEST}" \
+            --confirmation "${CONFIRMATION}" \
+            --drain-pace-window-ms "${DRAIN_PACE_WINDOW_MS}" \
             --shadow-report "${RUNNER_TEMP}/relay-same-cap-shadow-gate/relay-same-cap-shadow-gate-${{ fromJSON(needs.gate.outputs.cells)[0] }}-${GITHUB_RUN_ID}.json" \
             --commit-sha "${GITHUB_SHA}" --run-id "${GITHUB_RUN_ID}" \
-            --selector-generation "${{ inputs.expected-selector-generation }}" \
-            --rehome-generation "${{ inputs.expected-rehome-generation }}" \
+            --selector-generation "${SELECTOR_GENERATION}" \
+            --rehome-generation "${REHOME_GENERATION}" \
             > "${RUNNER_TEMP}/relay-same-cap-canary/authority.json"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: relay-same-cap-canary-${{ github.run_id }}
           path: ${{ runner.temp }}/relay-same-cap-canary/authority.json
@@ -415,14 +422,14 @@ jobs:
     timeout-minutes: 10
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ vars.PRODUCTION_GCP_RELAY_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.PRODUCTION_GCP_RELAY_DEPLOY_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
 
       - uses: ./.github/actions/cloud-sql-rollout-lease
         with:

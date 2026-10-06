@@ -12,9 +12,14 @@ import {
   insertIpynbCell,
   moveIpynbCell,
   updateIpynbCellKind,
-  updateIpynbCellSources
+  updateIpynbCellSourcesWithParse
 } from './ipynb-cell-mutations'
-import type { IpynbCell, IpynbCellKind, ParsedIpynb } from './ipynb-parse'
+import {
+  rememberIpynbParse,
+  type IpynbCell,
+  type IpynbCellKind,
+  type ParsedIpynb
+} from './ipynb-parse'
 
 const NOTEBOOK_SOURCE_COMMIT_DELAY_MS = 400
 
@@ -73,6 +78,7 @@ export function useIpynbDocumentEditing({
   const sourceDraftsRef = useRef(sourceDrafts)
   const contentRef = useRef(content)
   const notebookRef = useRef(notebook)
+  const notebookContentRef = useRef(content)
   const onContentChangeRef = useRef(onContentChange)
   const onDirtyStateHintRef = useRef(onDirtyStateHint)
   const sourceCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -80,15 +86,19 @@ export function useIpynbDocumentEditing({
   useLayoutEffect(() => {
     contentRef.current = content
     notebookRef.current = notebook
+    notebookContentRef.current = content
     onContentChangeRef.current = onContentChange
     onDirtyStateHintRef.current = onDirtyStateHint
   }, [content, notebook, onContentChange, onDirtyStateHint])
 
-  const materializeSourceDrafts = useCallback((): string => {
+  const materializeSourceDrafts = useCallback((): {
+    content: string
+    notebook: ParsedIpynb | null
+  } => {
     const latestNotebook = notebookRef.current
     const drafts = sourceDraftsRef.current
     if (!latestNotebook || Object.keys(drafts).length === 0) {
-      return contentRef.current
+      return { content: contentRef.current, notebook: null }
     }
     const updates = latestNotebook.cells
       .map((cell, index) => {
@@ -96,7 +106,9 @@ export function useIpynbDocumentEditing({
         return hasIpynbSourceDraft(drafts, key) ? { index, source: drafts[key] ?? '' } : null
       })
       .filter((update): update is { index: number; source: string } => update !== null)
-    return updateIpynbCellSources(contentRef.current, updates)
+    // The notebook only describes the content it was parsed from, not a newer unrendered commit.
+    const parsedFrom = notebookContentRef.current === contentRef.current ? latestNotebook : null
+    return updateIpynbCellSourcesWithParse(contentRef.current, updates, parsedFrom)
   }, [])
 
   const flushSourceDrafts = useCallback((): string => {
@@ -104,12 +116,15 @@ export function useIpynbDocumentEditing({
       clearTimeout(sourceCommitTimerRef.current)
       sourceCommitTimerRef.current = null
     }
-    const nextContent = materializeSourceDrafts()
-    if (nextContent !== contentRef.current) {
-      contentRef.current = nextContent
-      onContentChangeRef.current(nextContent)
+    const next = materializeSourceDrafts()
+    if (next.content !== contentRef.current) {
+      if (next.notebook) {
+        rememberIpynbParse(next.content, next.notebook)
+      }
+      contentRef.current = next.content
+      onContentChangeRef.current(next.content)
     }
-    return nextContent
+    return next.content
   }, [materializeSourceDrafts])
 
   const queueSourceDraftCommit = useCallback((): void => {
@@ -189,22 +204,37 @@ export function useIpynbDocumentEditing({
     [applyContent, flushSourceDrafts, onDeactivateEditor]
   )
 
-  const updateCellKind = (index: number, kind: IpynbCellKind): void => {
-    const language = notebookRef.current?.language ?? 'python'
-    applyStructuralChange((latestContent) =>
-      updateIpynbCellKind(latestContent, index, kind, language)
-    )
-  }
-  const insertCell = (index: number, kind: IpynbCellKind): void => {
-    const language = notebookRef.current?.language ?? 'python'
-    applyStructuralChange((latestContent) => insertIpynbCell(latestContent, index, kind, language))
-  }
-  const moveCell = (index: number, direction: -1 | 1): void => {
-    applyStructuralChange((latestContent) => moveIpynbCell(latestContent, index, direction))
-  }
-  const deleteCell = (index: number): void => {
-    applyStructuralChange((latestContent) => deleteIpynbCell(latestContent, index))
-  }
+  // Why: stable across renders so memoized cell rows skip re-rendering while another cell changes.
+  const updateCellKind = useCallback(
+    (index: number, kind: IpynbCellKind): void => {
+      const language = notebookRef.current?.language ?? 'python'
+      applyStructuralChange((latestContent) =>
+        updateIpynbCellKind(latestContent, index, kind, language)
+      )
+    },
+    [applyStructuralChange]
+  )
+  const insertCell = useCallback(
+    (index: number, kind: IpynbCellKind): void => {
+      const language = notebookRef.current?.language ?? 'python'
+      applyStructuralChange((latestContent) =>
+        insertIpynbCell(latestContent, index, kind, language)
+      )
+    },
+    [applyStructuralChange]
+  )
+  const moveCell = useCallback(
+    (index: number, direction: -1 | 1): void => {
+      applyStructuralChange((latestContent) => moveIpynbCell(latestContent, index, direction))
+    },
+    [applyStructuralChange]
+  )
+  const deleteCell = useCallback(
+    (index: number): void => {
+      applyStructuralChange((latestContent) => deleteIpynbCell(latestContent, index))
+    },
+    [applyStructuralChange]
+  )
 
   return {
     rootRef,

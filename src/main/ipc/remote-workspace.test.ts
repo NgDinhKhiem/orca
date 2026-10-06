@@ -430,6 +430,44 @@ describe('remoteWorkspace:setForConnectedTargets', () => {
     )
   })
 
+  it('sends no replace-session when the exported session matches the last accepted upload', async () => {
+    let accepted = snapshot({
+      activeWorktreePath: '/previous',
+      activeTabId: null,
+      tabsByWorktreePath: {},
+      terminalLayoutsByTabId: {}
+    })
+    const request = vi.fn(async (method: string, params: { patch?: { session?: unknown } }) => {
+      if (method === 'workspace.get') {
+        return accepted
+      }
+      accepted = snapshot(params.patch?.session as RemoteWorkspaceSession, accepted.revision + 1)
+      return { ok: true, snapshot: accepted }
+    })
+    muxByTargetId.set('target-1', { request })
+    requestByTargetId.set('target-1', request)
+    const session = {
+      ...baseSession,
+      activeRepoId: 'repo-target-1',
+      activeWorktreeId: 'repo-target-1::/repo',
+      activeTabId: 'tab-store'
+    } as WorkspaceSessionState
+    let observed = await observeTarget('target-1')
+    for (let persist = 0; persist < 3; persist++) {
+      const [entry] = (await callSetForConnectedTargets({
+        session,
+        hydratedTargetIds: ['target-1'],
+        expectedRevisionsByTargetId: { 'target-1': observed.revision },
+        expectedHostObservationTokensByTargetId: {
+          'target-1': observed.hostObservationToken
+        }
+      })) as { result: { ok: boolean; snapshot: RemoteWorkspaceObservedSnapshot } }[]
+      expect(entry.result.ok).toBe(true)
+      observed = entry.result.snapshot
+    }
+    expect(request.mock.calls.filter(([method]) => method === 'workspace.patch')).toHaveLength(1)
+  })
+
   it('does not invalidate an upload authority when an unchanged snapshot is polled', async () => {
     const first = await observeTarget('target-1')
     const second = await observeTarget('target-1')

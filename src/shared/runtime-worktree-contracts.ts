@@ -127,6 +127,7 @@ export type RuntimeWorktreeCreateResult = {
   warning?: string
   startupTerminal?: CreateWorktreeResult['startupTerminal']
   agentTerminalHandle?: string
+  setupApproval?: CreateWorktreeResult['setupApproval']
 }
 
 export type RuntimeWorktreeRemoveResult = RemoveWorktreeResult & {

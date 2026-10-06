@@ -23,6 +23,7 @@ import { checkoutPluginGitSource } from './plugin-git-repository'
 import { readPluginCurrentPointer } from './plugin-current-pointer'
 import { readPluginInstallProvenance } from './plugin-install-provenance'
 import { publishPluginInstall } from './plugin-install-publication'
+import { pluginDataRecordFiles } from './plugin-data-record-file'
 
 export type { PluginInstallResult } from './plugin-install-staging'
 
@@ -283,7 +284,10 @@ export async function removeInstalledPlugin(input: {
       throw new Error(`cannot remove protected plugin ${input.pluginKey}`)
     }
     await removeResolvedPluginDirectory(input.pluginsDir, input.pluginKey)
+    // Both sides: a debounced storage write landing after the delete would recreate the dir.
+    pluginDataRecordFiles.discardUnder(join(input.pluginsDataDir, input.pluginKey))
     await removeResolvedPluginDirectory(input.pluginsDataDir, input.pluginKey)
+    pluginDataRecordFiles.discardUnder(join(input.pluginsDataDir, input.pluginKey))
     await writePluginLockfile(
       input.pluginsDir,
       removePluginLock(await readPluginLockfile(input.pluginsDir), input.pluginKey)

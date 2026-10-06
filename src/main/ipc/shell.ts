@@ -1,6 +1,6 @@
 import { validatePathExistenceBatch } from '../../shared/path-existence-batch'
 import { ipcMain, shell, dialog } from 'electron'
-import { constants, copyFile, readFile, stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { basename, extname, isAbsolute, normalize, posix, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type {
@@ -17,6 +17,7 @@ import {
   resolveVsCodeRemoteSshLaunchSpec
 } from '../external-editor-launch'
 import { resolveVsCodeSshAuthority } from '../ssh/vscode-ssh-authority'
+import { isLaunchableOpenTargetPath } from './shell-launchable-open-target'
 
 export { EXTERNAL_EDITOR_CLI_COMMAND }
 
@@ -44,6 +45,31 @@ async function validateLocalPathTarget(
     return { ok: false, reason: 'not-found' }
   }
   return { ok: true, path: normalizedPath }
+}
+
+// Why: Settings → Keybindings offers these bare launchers without an Open In entry.
+const BUILT_IN_EXTERNAL_EDITOR_COMMANDS = new Set([EXTERNAL_EDITOR_CLI_COMMAND, 'cursor'])
+
+/**
+ * Returns the editor command to run, or null when the renderer named one the
+ * user never configured. Commands may run through a shell, so only persisted
+ * settings are trusted to supply them.
+ */
+function resolveConfiguredEditorCommand(
+  store: Store,
+  requestedCommand: string | undefined
+): string | undefined | null {
+  const command = requestedCommand?.trim()
+  if (!command) {
+    return undefined
+  }
+  if (BUILT_IN_EXTERNAL_EDITOR_COMMANDS.has(command)) {
+    return command
+  }
+  const configured = store
+    .getSettings()
+    .openInApplications?.find((application) => application.command.trim() === command)
+  return configured ? configured.command.trim() : null
 }
 
 function hasActiveRuntime(store: Store): boolean {
@@ -78,6 +104,10 @@ async function openInExternalEditor(
   if (hasActiveRuntime(store)) {
     return { ok: false, reason: 'remote-runtime-unsupported' }
   }
+  const command = resolveConfiguredEditorCommand(store, request.command)
+  if (command === null) {
+    return { ok: false, reason: 'launch-failed' }
+  }
 
   const connectionId = request.connectionId?.trim()
   if (connectionId) {
@@ -95,11 +125,7 @@ async function openInExternalEditor(
     if (!authority.ok) {
       return authority
     }
-    const launchSpec = resolveVsCodeRemoteSshLaunchSpec(
-      request.command,
-      request.path,
-      authority.authority
-    )
+    const launchSpec = resolveVsCodeRemoteSshLaunchSpec(command, request.path, authority.authority)
     if (!launchSpec) {
       return { ok: false, reason: 'remote-editor-unsupported' }
     }
@@ -116,7 +142,7 @@ async function openInExternalEditor(
     return target
   }
   try {
-    await launchExternalEditor(resolveExternalEditorLaunchSpec(request.command, target.path))
+    await launchExternalEditor(resolveExternalEditorLaunchSpec(command, target.path))
     return { ok: true }
   } catch {
     return { ok: false, reason: 'launch-failed' }
@@ -129,6 +155,12 @@ async function openWithSystemDefault(pathValue: string): Promise<boolean> {
     return false
   }
   try {
+    if (await isLaunchableOpenTargetPath(target.path)) {
+      // Why: a clicked link must never run a program; revealing it leaves the
+      // decision to the user in their file manager.
+      shell.showItemInFolder(target.path)
+      return true
+    }
     const errorMessage = await shell.openPath(target.path)
     return errorMessage.length === 0
   } catch {
@@ -298,23 +330,4 @@ export function registerShellHandlers(store: Store): void {
     }
     return result.filePaths[0]
   })
-
-  // Why: copying a picked image next to the markdown file lets us insert a
-  // relative path (e.g. `![](image.png)`) instead of embedding base64,
-  // keeping markdown files small and portable.
-  ipcMain.handle(
-    'shell:copyFile',
-    async (_event, args: { srcPath: string; destPath: string }): Promise<void> => {
-      const src = normalize(args.srcPath)
-      const dest = normalize(args.destPath)
-      if (!isAbsolute(src) || !isAbsolute(dest)) {
-        throw new Error('Both source and destination must be absolute paths')
-      }
-      // Why: COPYFILE_EXCL prevents silently overwriting an existing file.
-      // The renderer-side deconfliction loop already picks a unique name, so
-      // the dest should never exist — if it does, something is wrong and we
-      // should fail loudly rather than clobber data.
-      await copyFile(src, dest, constants.COPYFILE_EXCL)
-    }
-  )
 }

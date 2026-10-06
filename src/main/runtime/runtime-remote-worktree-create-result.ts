@@ -47,12 +47,12 @@ export function finishRuntimeRemoteWorktreeCreate(args: {
   const requested = args.request.runHooks ? 'run' : (args.request.setupDecision ?? 'inherit')
   const setupReceipt = {
     requested,
-    hookFound: Boolean(args.result.setup),
+    hookFound: Boolean(args.result.setup || args.result.setupApproval),
     startupPolicy: args.result.setup?.waitForAgentStartup
       ? ('wait-for-setup' as const)
       : ('start-immediately' as const),
     state:
-      requested === 'skip'
+      requested === 'skip' || args.result.setupApproval
         ? ('skipped' as const)
         : !args.result.setup
           ? ('not_configured' as const)

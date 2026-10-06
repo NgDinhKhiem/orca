@@ -143,7 +143,7 @@ describe('pnpm-owned verification record', () => {
     expect(resolve.run).toContain('"$RUNNER_OS" "$RUNNER_ARCH" "$pnpm_version" "$POLICY_HASH"')
     expect(cache.uses).toBe('./.github/actions/restore-pnpm-verification')
     expect(cache.with.enabled).toBe('${{ inputs.cache-pnpm-verification }}')
-    expect(restore.uses).toBe('actions/cache/restore@v5')
+    expect(restore.uses).toMatch(/^actions\/cache\/restore@[0-9a-f]{40}$/)
     expect(restore.with.path).toBe('${{ steps.verification-cache.outputs.path }}')
     expect(restore.with['restore-keys']).toBeUndefined()
     expect(restore['continue-on-error']).toBe(true)
@@ -177,7 +177,7 @@ describe('pnpm-owned verification record', () => {
     context.steps['verification-cache'].outputs.key = 'a-key'
     context.steps['verification-cache'].outputs['cache-hit'] = 'true'
     expect(evaluate(expression, context)).toBe(false)
-    expect(save.uses).toBe('actions/cache/save@v5')
+    expect(save.uses).toMatch(/^actions\/cache\/save@[0-9a-f]{40}$/)
     expect(steps.indexOf(save)).toBeGreaterThan(steps.indexOf(install))
   })
 })

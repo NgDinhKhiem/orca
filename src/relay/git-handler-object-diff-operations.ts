@@ -24,7 +24,8 @@ export class GitHandlerObjectDiffOperations extends GitHandlerOperationContext {
     const flags =
       format === 'name-status'
         ? ['--name-status']
-        : ['--patch', '--minimal', '--no-color', '--no-ext-diff']
+        : // Why: a repo's textconv driver is a command from the remote folder's config.
+          ['--patch', '--minimal', '--no-color', '--no-ext-diff', '--no-textconv']
     const result = await this.git(['diff', ...flags, `${mergeBase}..HEAD`, '--'], worktreePath, {
       signal: context?.signal,
       disableOptionalLocks: true

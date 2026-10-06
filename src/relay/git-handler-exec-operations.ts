@@ -11,7 +11,10 @@ export class GitHandlerExecOperations extends GitHandlerOperationContext {
     const cwd = params.cwd as string
 
     validateGitExecArgs(args)
-    const run = () => this.git(args, cwd, { signal: context?.signal })
+    // Why here, not on the wire: older relays reject an unknown diff flag, while every client's
+    // staged diff must still skip the repo's textconv driver, a command from repo config.
+    const runArgs = args[0] === 'diff' ? ['diff', '--no-textconv', ...args.slice(1)] : args
+    const run = () => this.git(runArgs, cwd, { signal: context?.signal })
     const { stdout, stderr } = gitExecMutatesRepository(args)
       ? await this.runWithGitReadCacheClear(run)
       : await run()

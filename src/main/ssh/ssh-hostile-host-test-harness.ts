@@ -68,7 +68,11 @@ export function installHostileHostAppEnvironment(): () => void {
 }
 
 export async function connectHostileHost(sshTarget: SshTarget): Promise<SshConnection> {
-  const conn = new SshConnection(sshTarget, { onStateChange: () => {} })
+  // Why confirmed: each hostile-host container presents a fresh, unknown host key.
+  const conn = new SshConnection(sshTarget, {
+    onStateChange: () => {},
+    onHostKeyConfirmRequest: async () => 'confirmed'
+  })
   await conn.connect()
   return conn
 }

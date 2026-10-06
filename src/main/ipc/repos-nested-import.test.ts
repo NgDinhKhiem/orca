@@ -34,7 +34,7 @@ vi.mock('../ssh/ssh-target-registry', () => moduleMocks.sshModuleMock(reposMocks
 import { registerRepoHandlers } from './repos'
 import { clearGitCapabilityStateForTests } from '../git/git-capability-state'
 import { resetSshProviderAuthorities } from '../ssh/ssh-provider-authority'
-import { getGitRepoRoot, isGitRepo } from '../git/repo'
+import { getGitRepoRoot, isGitRepo, isGitRepoAsync } from '../git/repo'
 import { createRepoHandlerHarness, resetProjectGroupMocks } from './repos-remote-test-harness'
 
 const {
@@ -472,6 +472,50 @@ describe('projectGroups IPC validation', () => {
         (result as { projects: { projectId?: string }[] }).projects[1].projectId
       )
     } finally {
+      await rm(tempRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('probes local nested repos asynchronously with bounded concurrency', async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), 'orca-nested-async-probe-'))
+    try {
+      const repoPaths = Array.from({ length: 12 }, (_, index) => join(tempRoot, `repo-${index}`))
+      for (const repoPath of repoPaths) {
+        await mkdir(join(repoPath, '.git'), { recursive: true })
+      }
+      let active = 0
+      let maximum = 0
+      // The parent folder itself is not a repo, so the scan descends into it.
+      vi.mocked(isGitRepo).mockImplementation((path: string) => path !== tempRoot)
+      vi.mocked(isGitRepoAsync).mockClear()
+      vi.mocked(isGitRepoAsync).mockImplementation(async (path: string) => {
+        active += 1
+        maximum = Math.max(maximum, active)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        active -= 1
+        return path !== repoPaths[3]
+      })
+      listWorktreeGraphMock.mockRejectedValue(new Error('no graph'))
+
+      const result = (await handlers.get('projectGroups:importNested')!(null, {
+        parentPath: tempRoot,
+        groupName: '',
+        projectPaths: repoPaths,
+        mode: 'separate'
+      })) as { importedCount: number; failedCount: number; projects: { path: string }[] }
+
+      const probedPaths = vi.mocked(isGitRepoAsync).mock.calls.map(([path]) => path)
+      expect(vi.mocked(isGitRepo).mock.calls.filter(([path]) => repoPaths.includes(path))).toEqual(
+        []
+      )
+      expect([...probedPaths].sort()).toEqual([...repoPaths].sort())
+      expect(maximum).toBeGreaterThan(1)
+      expect(maximum).toBeLessThanOrEqual(6)
+      expect(result).toMatchObject({ importedCount: 11, failedCount: 1 })
+      // Results keep the selection order even though probes finish out of order.
+      expect(result.projects.map((project) => project.path)).toEqual(probedPaths)
+    } finally {
+      vi.mocked(isGitRepoAsync).mockReset()
       await rm(tempRoot, { recursive: true, force: true })
     }
   })

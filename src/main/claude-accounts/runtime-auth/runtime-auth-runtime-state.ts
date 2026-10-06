@@ -1,6 +1,10 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import type { ClaudeManagedAccount } from '../../../shared/managed-account-types'
 import {
+  ClaudeConfigProjectionCache,
+  forgetCachedClaudeConfig
+} from '../../claude/claude-config-projection-cache'
+import {
   deleteActiveClaudeKeychainCredentialsStrict,
   readActiveClaudeKeychainCredentialsStrict,
   writeActiveClaudeKeychainCredentials
@@ -14,6 +18,14 @@ import {
   RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR,
   type ClaudeKeychainSnapshotValue
 } from './runtime-auth-types'
+
+// Why: auth sync reads only `oauthAccount`, often several times per pass, from a multi-MB file.
+const runtimeOauthAccountCache = new ClaudeConfigProjectionCache((parsed): unknown => {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR
+  }
+  return ('oauthAccount' in parsed ? parsed.oauthAccount : undefined) ?? null
+})
 
 export class ClaudeRuntimeAuthRuntimeState extends ClaudeRuntimeAuthKeychainSnapshots {
   protected async mergeLiveRuntimeSharedCredentials(credentialsJson: string): Promise<string> {
@@ -199,12 +211,9 @@ export class ClaudeRuntimeAuthRuntimeState extends ClaudeRuntimeAuthKeychainSnap
       return null
     }
     try {
-      const parsed = JSON.parse(readFileSync(configPath, 'utf-8')) as unknown
-      const record = this.asRecord(parsed)
-      if (!record) {
-        return RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR
-      }
-      return record.oauthAccount ?? null
+      const oauthAccount = runtimeOauthAccountCache.readSync(configPath)
+      // Why: the cached value is shared, so callers get their own copy.
+      return typeof oauthAccount === 'symbol' ? oauthAccount : structuredClone(oauthAccount)
     } catch {
       return RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR
     }
@@ -233,6 +242,7 @@ export class ClaudeRuntimeAuthRuntimeState extends ClaudeRuntimeAuthKeychainSnap
       existing.oauthAccount = oauthAccount
     }
     this.writeJson(configPath, existing)
+    forgetCachedClaudeConfig(configPath)
     return true
   }
 }

@@ -19,6 +19,7 @@ import {
   killSpawnedRipgrepProcess
 } from '../shared/ripgrep-process-availability'
 import { buildRelayGitEnv } from './relay-command-env'
+import { withGitRepoConfigCommandGuard } from '../shared/git-repo-config-command-guard'
 
 /**
  * Text search using `git grep`. Fallback when rg is not installed.
@@ -42,7 +43,7 @@ export function searchWithGitGrep(
 
     const child = spawnProcess({
       program: 'git',
-      args: gitArgs,
+      args: withGitRepoConfigCommandGuard(gitArgs),
       cwd: rootPath,
       env: buildRelayGitEnv(),
       stdio: ['ignore', 'pipe', 'pipe']

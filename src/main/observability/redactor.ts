@@ -9,31 +9,17 @@
 // No per-attribute length cap: envelope bounds already cap size, and truncation
 // would eat the tail of long stack chains — the most diagnostic part.
 
-// `\b` stops this from stealing rule-4's `FOO_SECRET=` matches; the value alternation eats the whole `Bearer <jwt>`/`Token <pat>` segment.
-const LABELED_KV =
-  /\b(?:api[-_]?key|token|secret|password|bearer|authorization)\b\s*[:=]\s*(?:Bearer\s+\S+|Token\s+\S+|\S+)/gi
+import { homedir } from 'node:os'
+import { escapeRegex } from '../../shared/string-utils'
+import {
+  COOKIE_HEADER_PATTERN,
+  CREDENTIAL_TOKEN_PATTERNS
+} from '../../shared/credential-token-patterns'
 
-// Tagged tokens let triage see what was redacted without the key. Order is most-specific-first: `sk-ant-` before `sk-`, or the Anthropic tag is lost.
-const PROVIDER_PATTERNS: { tag: string; re: RegExp }[] = [
-  { tag: 'anthropic-key', re: /sk-ant-[a-zA-Z0-9_-]{40,}/g },
-  { tag: 'openai-key', re: /sk-(?:proj-)?[a-zA-Z0-9_-]{32,}/g },
-  { tag: 'github-token', re: /gh[pousr]_[A-Za-z0-9]{36,}/g },
-  { tag: 'aws-access-key-id', re: /AKIA[0-9A-Z]{16}/g },
-  {
-    tag: 'aws-secret-access-key',
-    re: /aws_secret_access_key\s*[:=]\s*[A-Za-z0-9/+=]{40}/gi
-  },
-  {
-    tag: 'jwt',
-    re: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g
-  },
-  { tag: 'slack-token', re: /xox[baprsoe]-[A-Za-z0-9-]{10,}/g },
-  {
-    tag: 'pem',
-    // Lazy `[\s\S]+?` so two back-to-back PEM blocks redact independently, not as one gobbled span.
-    re: /-----BEGIN [A-Z ]+-----[\s\S]+?-----END [A-Z ]+-----/g
-  }
-]
+// `\b` stops this from stealing rule-4's `FOO_SECRET=` matches; the named prefixes catch `?access_token=` / `"client_secret":`.
+// The value alternation eats the whole `Basic <b64>`/`Bearer <jwt>`/`Token <pat>` segment, not just the scheme.
+const LABELED_KV =
+  /\b(?:(?:access|refresh|client|id|private|auth|session|oauth)[-_]?)?(?:api[-_]?key|token|secret|password|bearer|authorization)\b["']?\s*[:=]\s*(?:(?:Basic|Bearer|Token|Digest|Negotiate)\s+\S+|\S+)/gi
 
 // Strip URL userinfo — both `user:pass@` and bare-token `<pat>@` (seen in failing git stderr); keep host+path for debug context.
 const URL_USERINFO = /(https?:\/\/)([^/@\s]+)@/g
@@ -102,11 +88,14 @@ export function redactString(input: string): string {
   }
   let out = input
 
+  // Rule 0 — whole Cookie/Set-Cookie header values; later cookies in the header carry no keyword.
+  out = out.replace(COOKIE_HEADER_PATTERN, '$1: [redacted:cookie]')
+
   // Rule 1 — labeled key-value. Drop the key alongside the value; the label name adds no debug context once the value is gone.
   out = out.replace(LABELED_KV, '[redacted:labeled-kv]')
 
   // Rule 2 — provider-key fingerprints. Tag names (`anthropic-key`) are stable wire identifiers third-party NDJSON tools grep for.
-  for (const { tag, re } of PROVIDER_PATTERNS) {
+  for (const { tag, re } of CREDENTIAL_TOKEN_PATTERNS) {
     out = out.replace(re, `[redacted:${tag}]`)
   }
 
@@ -116,7 +105,39 @@ export function redactString(input: string): string {
   // Rule 4 — .env-shape line: keep key, redact value. Last so rule 1 wins over a coincidentally .env-shaped substring.
   out = redactEnvironmentLines(out)
 
+  // Rule 5 — home directory to `~` so stack traces and git stderr keep their shape without the username.
+  const home = homeDirectoryPattern()
+  if (home) {
+    out = out.replace(home, '~')
+  }
+
   return out
+}
+
+let cachedHomeDirectoryPattern: RegExp | null | undefined
+
+function homeDirectoryPattern(): RegExp | null {
+  if (cachedHomeDirectoryPattern !== undefined) {
+    return cachedHomeDirectoryPattern
+  }
+  let home = ''
+  try {
+    home = homedir()
+  } catch {
+    // An unresolvable home leaves nothing to strip.
+  }
+  // Why the length floor: a root-ish home (`/`, `C:\`) would rewrite every absolute path.
+  if (home.replace(/[\\/]+$/, '').length < 4) {
+    cachedHomeDirectoryPattern = null
+    return null
+  }
+  const spellings = [...new Set([home, home.replaceAll('\\', '/')])].map(escapeRegex)
+  // Lookahead keeps `/home/ada-backup` intact; Windows paths compare case-insensitively.
+  cachedHomeDirectoryPattern = new RegExp(
+    `(?:${spellings.join('|')})(?![A-Za-z0-9._-])`,
+    /^[A-Za-z]:/.test(home) ? 'gi' : 'g'
+  )
+  return cachedHomeDirectoryPattern
 }
 
 /** Index of the first non-`\s` code unit at or after `index`, or `input.length`. ASCII is the spec-fixed set; anything else defers to the engine. */

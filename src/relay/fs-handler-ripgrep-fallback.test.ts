@@ -40,6 +40,7 @@ vi.mock('./fs-handler-readdir-fallback', () => ({
   listFilesWithReaddir: listFilesWithReaddirMock
 }))
 
+import { GIT_FSMONITOR_DISABLED_ARGS } from '../shared/git-repo-config-command-guard'
 import { FileListingCancelledError } from '../shared/file-listing-cancellation'
 import { RipgrepUnavailableError } from '../shared/ripgrep-process-availability'
 import { RelayContext } from './context'
@@ -108,7 +109,7 @@ describe('relay direct ripgrep admission', () => {
       expect(listFilesWithRgMock).toHaveBeenCalledTimes(1)
       expect(runProcessMock).toHaveBeenCalledWith({
         program: 'git',
-        args: ['rev-parse', '--is-inside-work-tree'],
+        args: [...GIT_FSMONITOR_DISABLED_ARGS, 'rev-parse', '--is-inside-work-tree'],
         cwd: '/repo',
         env: buildRelayCommandEnv(),
         timeoutMs: 5_000,

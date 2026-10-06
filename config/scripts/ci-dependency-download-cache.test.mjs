@@ -10,7 +10,7 @@ const action = read('.github/actions/install-node-dependencies/action.yml')
 describe('CI dependency download caches', () => {
   it('scopes desktop stores to the root lockfile and lets mixed installs opt in', () => {
     expect(action.inputs['cache-dependency-path'].default).toBe('pnpm-lock.yaml')
-    for (const step of action.runs.steps.filter((step) => step.uses === 'actions/setup-node@v6')) {
+    for (const step of action.runs.steps.filter((step) => step.uses?.startsWith('actions/setup-node@'))) {
       expect(step.with.cache).toBe(
         "${{ github.event_name != 'pull_request' && inputs.cache-pnpm-store != 'false' && steps.pnpm-store-mode.outputs.lookup-only != 'true' && 'pnpm' || '' }}"
       )
@@ -43,7 +43,7 @@ describe('CI dependency download caches', () => {
     expect(resolve.if).toBe(
       `${restore.if} || (github.event_name != 'pull_request' && inputs.cache-pnpm-store != 'false' && steps.pnpm-store-mode.outputs.lookup-only == 'true')`
     )
-    expect(restore.uses).toBe('actions/cache/restore@v5')
+    expect(restore.uses).toMatch(/^actions\/cache\/restore@[0-9a-f]{40}$/)
     expect(restore.with.path).toBe('${{ steps.pnpm-store.outputs.path }}')
     expect(restore.with.key).toBe(
       'node-cache-${{ runner.os }}-${{ steps.pnpm-store.outputs.arch }}-pnpm-${{ hashFiles(inputs.cache-dependency-path) }}'
@@ -54,7 +54,7 @@ describe('CI dependency download caches', () => {
     expect(action.runs.steps.indexOf(restore)).toBeLessThan(
       action.runs.steps.findIndex((step) => step.name === 'Install dependencies')
     )
-    const saves = action.runs.steps.filter((step) => step.uses === 'actions/cache/save@v5')
+    const saves = action.runs.steps.filter((step) => step.uses?.startsWith('actions/cache/save@'))
     expect(saves).toHaveLength(1)
     expect(saves[0].name).toBe('Save pnpm verification record on main')
     expect(saves[0].if).toContain("github.ref == 'refs/heads/main'")
@@ -73,7 +73,7 @@ describe('CI dependency download caches', () => {
     const lookup = action.runs.steps.find((step) => step.id === 'pnpm-store-lookup')
     const restore = action.runs.steps.find((step) => step.id === 'pnpm-store-restore')
     expect(action.inputs['cache-pnpm-store-lookup-only'].default).toBe('auto')
-    expect(lookup.uses).toBe('actions/cache@v5')
+    expect(lookup.uses).toMatch(/^actions\/cache@[0-9a-f]{40}$/)
     expect(lookup.if).toBe("steps.pnpm-store-mode.outputs.lookup-only == 'true'")
     expect(lookup.with).toEqual({
       path: '${{ env.ORCA_PNPM_STORE_CACHE_PATH }}',
@@ -254,7 +254,7 @@ describe('CI dependency download caches', () => {
         event !== 'pull_request' && storeCache !== 'false' && lookupOnly === 'true'
       )
       for (const step of action.runs.steps.filter(
-        (step) => step.uses === 'actions/setup-node@v6'
+        (step) => step.uses?.startsWith('actions/setup-node@')
       )) {
         expect(evaluate(step.with.cache.slice(3, -2))).toBe(cache)
         expect(step.with['package-manager-cache']).toBe(false)
@@ -295,20 +295,20 @@ describe('CI dependency download caches', () => {
     const save = release.steps.find((step) => step.name === 'Cache electron-builder downloads')
 
     expect(packaging['runs-on']).toBe(windows.os)
-    expect(restore.uses).toBe('actions/cache/restore@v5')
+    expect(restore.uses).toMatch(/^actions\/cache\/restore@[0-9a-f]{40}$/)
     // Cache versions include the path list, so matching key strings alone cannot prove reuse.
     expect(restore.with.path).toBe(windows.eb_cache_path)
     expect(restore.with.key).toBe(save.with.key.replace('${{ matrix.platform }}', 'win'))
-    expect(restore.with['restore-keys']).toBe(
-      save.with['restore-keys'].replace('${{ matrix.platform }}', 'win')
-    )
-    expect(save.uses).toBe('actions/cache@v5')
+    // The signing release job restores exact keys only; PR packaging keeps its prefix fallback.
+    expect(save.with['restore-keys']).toBeUndefined()
+    expect(restore.with['restore-keys'].trim()).toBe('electron-builder-win-')
+    expect(save.uses).toMatch(/^actions\/cache@[0-9a-f]{40}$/)
     expect(save.with.path).toBe('${{ matrix.eb_cache_path }}')
     for (const name of ['dev-channel-win-build', 'windows-signing-rehearsal']) {
       const writer = Object.values(workflow(name).jobs)
         .flatMap((job) => job.steps ?? [])
         .find((step) => step.name === 'Cache electron-builder downloads')
-      expect(writer.uses, name).toBe('actions/cache@v5')
+      expect(writer.uses, name).toMatch(/^actions\/cache@[0-9a-f]{40}$/)
       expect(writer.with.path, name).toBe(restore.with.path)
       expect(writer.with.key, name).toBe(restore.with.key)
       expect(writer.with['restore-keys'], name).toBe(restore.with['restore-keys'])
@@ -329,15 +329,15 @@ describe('CI dependency download caches', () => {
 
     expect(packaging['runs-on']).toBe(linux.os)
     expect(writer.if).toBe("matrix.platform == 'linux-x64' && github.ref == 'refs/heads/main'")
-    expect(writer.uses).toBe('actions/cache@v5')
+    expect(writer.uses).toMatch(/^actions\/cache@[0-9a-f]{40}$/)
     expect(writer.with.path).toBe(consumer.with.path)
     expect(writer.with.key).toBe(consumer.with.key)
     expect(writer.with['restore-keys']).toBeUndefined()
     expect(writer.with['lookup-only']).toBe(true)
     expect(release.steps.indexOf(writer)).toBeGreaterThan(release.steps.indexOf(combined))
-    expect(consumer.uses).toBe('actions/cache/restore@v5')
+    expect(consumer.uses).toMatch(/^actions\/cache\/restore@[0-9a-f]{40}$/)
     expect(consumer.with['restore-keys'].trim()).toBe('electron-builder-linux-')
-    expect(combined.uses).toBe('actions/cache@v5')
+    expect(combined.uses).toMatch(/^actions\/cache@[0-9a-f]{40}$/)
     expect(linux.eb_cache_path.trim().split('\n')).toEqual([
       '~/.cache/electron',
       '~/.cache/electron-builder'
@@ -354,8 +354,8 @@ it('shares Electron archives with PRs without uploading PR-local copies', () => 
   expect(restore.if).toContain("github.event_name == 'pull_request' && runner.os == 'Linux'")
   expect(save.if).toContain("steps.electron-package-cache.outputs.version != ''")
   expect(restore.if).toContain("steps.electron-package-cache.outputs.version != ''")
-  expect(save.uses).toBe('actions/cache@v5')
-  expect(restore.uses).toBe('actions/cache/restore@v5')
+  expect(save.uses).toMatch(/^actions\/cache@[0-9a-f]{40}$/)
+  expect(restore.uses).toMatch(/^actions\/cache\/restore@[0-9a-f]{40}$/)
   expect(restore.with).toEqual(save.with)
 })
 
@@ -384,7 +384,7 @@ describe('release install targets', () => {
     const installs = installSteps('release-cut')
     expect(installs.length).toBeGreaterThan(0)
     for (const step of installs) {
-      expect(step.uses).toBe('nick-fields/retry@v4')
+      expect(step.uses).toMatch(/^nick-fields\/retry@[0-9a-f]{40}$/)
       expect(step.with.max_attempts).toBeGreaterThan(1)
     }
   })

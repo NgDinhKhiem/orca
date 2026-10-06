@@ -25,7 +25,7 @@ it('uses default-branch code without checking out a closed PR', () => {
   expect(workflow.on).toEqual({ pull_request_target: { types: ['closed'] } })
   expect(workflow.permissions).toEqual({ actions: 'write', 'pull-requests': 'read' })
   expect(workflow.jobs.clean.steps).toHaveLength(2)
-  expect(workflow.jobs.clean.steps.every((step) => step.uses === 'actions/github-script@v8')).toBe(
+  expect(workflow.jobs.clean.steps.every((step) => step.uses?.startsWith('actions/github-script@'))).toBe(
     true
   )
 })

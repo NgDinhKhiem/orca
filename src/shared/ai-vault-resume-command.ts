@@ -16,6 +16,7 @@ import {
   withoutEnvCommand
 } from './tui-agent-startup-shell'
 import type { AiVaultAgent, AiVaultSession } from './ai-vault-types'
+import { quoteWindowsCmdArgument } from './child-process/windows-command-line'
 
 export function buildAiVaultResumeCommand(args: {
   agent: AiVaultAgent
@@ -42,7 +43,7 @@ export function buildAiVaultResumeCommand(args: {
       : sessionId
   const sessionArg =
     shell === 'cmd'
-      ? quoteWindowsCmdArg(resumeTarget)
+      ? quoteWindowsCmdArgument(resumeTarget)
       : shell
         ? quoteStartupArg(resumeTarget, shell)
         : quoteShellArg(resumeTarget, platform)
@@ -118,15 +119,15 @@ export function buildAiVaultResumeShellCommand(args: {
   if (platform === 'win32' && shell === 'cmd') {
     // Why: an interactive cmd splits the doubled quotes required by a nested
     // `cmd /s /c` wrapper, so queued commands must use direct cmd syntax.
-    return `${clearPrefix}${cwd ? `cd /d ${quoteWindowsCmdArg(cwd)} && ${resumeCommand}` : resumeCommand}`
+    return `${clearPrefix}${cwd ? `cd /d ${quoteWindowsCmdArgument(cwd)} && ${resumeCommand}` : resumeCommand}`
   }
   if (!cwd) {
     return `${clearPrefix}${resumeCommand}`
   }
 
   if (platform === 'win32') {
-    const inner = `${clearPrefix}cd /d ${quoteWindowsCmdArg(cwd)} && ${resumeCommand}`
-    return `cmd /d /s /c ${quoteWindowsCmdArg(inner)}`
+    const inner = `${clearPrefix}cd /d ${quoteWindowsCmdArgument(cwd)} && ${resumeCommand}`
+    return buildLegacyWindowsCmdWrapper(inner, [cwd, args.resumeCommand, resolvedCodexHome ?? ''])
   }
 
   return `cd ${quoteResumeArg(cwd, platform, shell)} && ${resumeCommand}`
@@ -260,7 +261,8 @@ function codexHomeEnvPrefix(
     return ''
   }
   if (platform === 'win32') {
-    return `set ${quoteWindowsCmdArg(`CODEX_HOME=${codexHome}`)} && `
+    // Why plain doubling: `set` is a builtin, so argv-style escapes would land in the value.
+    return `set ${doubleQuoteForCmd(`CODEX_HOME=${codexHome}`)} && `
   }
   // fish accepts the `NAME=value cmd` prefix (3.1+), but not sh's quoting.
   return `CODEX_HOME=${quoteResumeArg(codexHome, platform, shell)} `
@@ -281,9 +283,26 @@ function quoteResumeArg(
  *  `quoteStartupArg` keeps one spelling regardless of whether a caller happened
  *  to pass a shell. */
 function quoteShellArg(value: string, platform: NodeJS.Platform): string {
-  return platform === 'win32' ? quoteWindowsCmdArg(value) : quoteStartupArg(value, 'posix')
+  return platform === 'win32' ? quoteWindowsCmdArgument(value) : quoteStartupArg(value, 'posix')
 }
 
-function quoteWindowsCmdArg(value: string): string {
+// Syntax or expansion to cmd (`&|<>^%!`) or PowerShell (`$`, backtick) even inside the doubled-quote
+// wrapper, where the nested cmd reads each `""` as an empty pair and leaves the value bare.
+const LEGACY_CMD_WRAPPER_UNSAFE = /[&|<>^%!$`\r\n]/
+
+/**
+ * The shell-less wrapper is typed into whichever shell the host runs. Plain values keep the historical
+ * doubled-quote form both cmd and PowerShell read. Anything else goes in a PowerShell literal string:
+ * PowerShell hands it to the nested cmd intact, and an interactive cmd splits it at the first `&&`
+ * before the agent runs, so the line fails closed there instead of executing a value.
+ */
+function buildLegacyWindowsCmdWrapper(inner: string, embeddedValues: readonly string[]): string {
+  if (!embeddedValues.some((value) => LEGACY_CMD_WRAPPER_UNSAFE.test(value))) {
+    return `cmd /d /s /c ${doubleQuoteForCmd(inner)}`
+  }
+  return `cmd /d /v:off /s /c '${inner.replaceAll("'", "''")}'`
+}
+
+function doubleQuoteForCmd(value: string): string {
   return `"${value.replace(/"/g, '""')}"`
 }

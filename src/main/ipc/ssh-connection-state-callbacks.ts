@@ -11,6 +11,7 @@ import {
 } from './ssh-connect-attempt-registry'
 import { connectionManager, getCurrentMainWindow } from './ssh-ipc-context'
 import { requestCredential } from './ssh-passphrase'
+import { confirmUnknownHostKeyWithDialog } from './ssh-host-key-confirm-dialog'
 import { clearRelayLostBackoff } from './ssh-relay-lost-backoff'
 import {
   broadcastSshState,
@@ -124,6 +125,8 @@ export function createSshConnectionCallbacks(): SshConnectionCallbacks {
       credentialRequestedForTarget.add(targetId)
       return requestCredential(getCurrentMainWindow, targetId, kind, detail, echo, signal)
     },
+    onHostKeyConfirmRequest: (_targetId, request, signal) =>
+      confirmUnknownHostKeyWithDialog(getCurrentMainWindow, request, signal),
     onStateChange: handleSshConnectionStateChange
   }
 }

@@ -162,6 +162,9 @@ vi.mock('../browser/browser-session-proxy', () => ({
   invalidateBrowserSessionProxyApplication: vi.fn()
 }))
 vi.mock('../browser/doc-preview-protocol', () => ({ installDocPreviewProtocolHandler: vi.fn() }))
+vi.mock('../plugins/plugin-panel-document-protocol', () => ({
+  registerPluginPanelDocumentHandlers: vi.fn()
+}))
 vi.mock('../ipc/doc-preview-grant-ipc', () => ({ registerDocPreviewGrantHandlers: vi.fn() }))
 
 // browser-session-startup and browser-session-registry are deliberately NOT mocked: they are the

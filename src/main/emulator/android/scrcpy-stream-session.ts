@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { connect, type Socket } from 'node:net'
 import { randomBytes } from 'node:crypto'
+import { ownRetainedString } from '../../../shared/own-retained-string'
 import { RelayFrameBuffer } from '../../../shared/relay-frame-buffer'
 import type { AndroidCommandRunner } from './android-command-runner'
 import type { AndroidSdkPaths } from './android-sdk-discovery'
@@ -28,6 +29,7 @@ import { emulatorProbe, emulatorProbeError } from '../emulator-probe'
 const DEVICE_NAME_BYTES = 64
 const DUMMY_BYTE = 1
 const DYNAMIC_FORWARD_PORT = 0
+const SCRCPY_SERVER_LOG_MAX_CHARS = 1000
 
 export type ScrcpyStreamCallbacks = {
   onMeta: (meta: ScrcpyVideoMeta) => void
@@ -126,13 +128,19 @@ export class ScrcpyStreamSession {
     })
     let serverLog = ''
     const capture = (chunk: Buffer): void => {
-      serverLog += chunk.toString()
+      // Why: the server logs for the whole session but only this prefix is ever reported.
+      if (serverLog.length >= SCRCPY_SERVER_LOG_MAX_CHARS) {
+        return
+      }
+      serverLog = ownRetainedString(
+        (serverLog + chunk.toString()).slice(0, SCRCPY_SERVER_LOG_MAX_CHARS)
+      )
     }
     this.server.stdout?.on('data', capture)
     this.server.stderr?.on('data', capture)
     this.server.on('error', (error) => this.fail(error.message))
     this.server.on('exit', (code) => {
-      emulatorProbe('scrcpy.server.exit', { code, log: serverLog.slice(0, 1000).trim() })
+      emulatorProbe('scrcpy.server.exit', { code, log: serverLog.trim() })
       if (!this.metaSeen) {
         this.fail('scrcpy server exited before the video stream started')
         return

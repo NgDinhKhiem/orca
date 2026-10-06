@@ -1,4 +1,5 @@
 import type { ConnectConfig } from 'ssh2'
+import type { HostKeyConfirmation, HostKeyConfirmRequest } from './ssh-host-key-verifier'
 import type { SshTarget, SshConnectionState } from '../../shared/ssh-types'
 import type { SshResolvedConfig } from './ssh-config-parser'
 import {
@@ -26,6 +27,12 @@ export type SshConnectionCallbacks = {
     echo?: boolean,
     signal?: AbortSignal
   ) => Promise<string | null>
+  /** Absent means nothing can prompt, so an unknown host under `ask` is refused. */
+  onHostKeyConfirmRequest?: (
+    targetId: string,
+    request: HostKeyConfirmRequest,
+    signal?: AbortSignal
+  ) => Promise<HostKeyConfirmation>
 }
 
 export function isPassphraseError(err: Error): boolean {

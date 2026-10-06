@@ -7,7 +7,7 @@ import type {
   KernelStartResult,
   PythonEnvironment
 } from '../../../../shared/notebook-kernel-types'
-import { applyKernelOutput } from './ipynb-kernel-outputs'
+import { flushKernelOutputs, queueKernelOutput } from './ipynb-kernel-output-batching'
 import { fenced, noticeOutput, startRun, stopRuns } from './ipynb-kernel-runs'
 import {
   getSession,
@@ -168,6 +168,7 @@ export async function runCells(
 }
 
 export function restartKernel(filePath: string): void {
+  flushKernelOutputs(filePath)
   updateSession(filePath, stopRuns)
   void start(filePath)
 }
@@ -291,7 +292,12 @@ function handleFrame({ filePath, frame }: KernelFrameEvent): void {
   if (!isOpen(filePath)) {
     return
   }
-  const session = getSession(filePath)
+  if (frame.type !== 'exit' && frame.type !== 'done') {
+    queueKernelOutput(filePath, frame)
+    return
+  }
+  // Output frames precede their run's end, so they land before it.
+  flushKernelOutputs(filePath)
   if (frame.type === 'exit') {
     const died = translate('auto.components.editor.IpynbViewer.kernelDied', 'The kernel died.')
     updateSession(filePath, (current) => ({
@@ -300,26 +306,20 @@ function handleFrame({ filePath, frame }: KernelFrameEvent): void {
     }))
     return
   }
-  const key = runningCellKey(session)
+  const key = runningCellKey(getSession(filePath))
   if (key === null) {
     return
   }
-  if (frame.type === 'done') {
-    updateSession(filePath, ({ queue, runs }) => ({
-      // Like Jupyter, an error (including an interrupt) cancels the cells queued after it.
-      queue: frame.status === 'ok' ? queue : [],
-      interruptStalled: false,
-      runs: {
-        ...runs,
-        [key]: { ...runs[key], executionCount: frame.execution_count, finishedAt: Date.now() }
-      }
-    }))
-    pump(filePath)
-    return
-  }
-  updateSession(filePath, ({ runs }) => ({
-    runs: { ...runs, [key]: applyKernelOutput(runs[key], frame.type, frame.content) }
+  updateSession(filePath, ({ queue, runs }) => ({
+    // Like Jupyter, an error (including an interrupt) cancels the cells queued after it.
+    queue: frame.status === 'ok' ? queue : [],
+    interruptStalled: false,
+    runs: {
+      ...runs,
+      [key]: { ...runs[key], executionCount: frame.execution_count, finishedAt: Date.now() }
+    }
   }))
+  pump(filePath)
 }
 
 // Kernels only exist once this module has loaded with the notebook viewer, so it subscribes here.

@@ -1,9 +1,15 @@
 import { WebSocketServer, type WebSocket } from 'ws'
-import { createServer, type Server } from 'node:http'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import type { Duplex } from 'node:stream'
 import type { WebContents } from 'electron'
 import { CdpClientResponseWriter } from './cdp-client-response-writer'
 import { CdpSyntheticSessionRegistry } from './cdp-synthetic-session-registry'
 import { CdpTargetDiscovery } from './cdp-target-discovery'
+import { CdpWsProxyAccess } from './cdp-ws-proxy-access'
+import {
+  beginAgentClipboardRead,
+  isAgentClipboardReadEvaluate
+} from './browser-agent-clipboard-read-grant'
 import { CdpDebuggerChannel } from './cdp-debugger-channel'
 import { CdpPageNavigationCommands } from './cdp-page-navigation-commands'
 import { CdpDomFocusReplay } from './cdp-dom-focus-replay'
@@ -16,6 +22,7 @@ export class CdpWsProxy {
   private client: WebSocket | null = null
   private detachClientListeners: (() => void) | null = null
   private port = 0
+  private readonly access = new CdpWsProxyAccess()
   private readonly responder = new CdpClientResponseWriter(() => this.client)
   private readonly sessions = new CdpSyntheticSessionRegistry()
   private readonly discovery: CdpTargetDiscovery
@@ -28,11 +35,8 @@ export class CdpWsProxy {
     private readonly webContents: WebContents,
     holdPaint: CapturePaintHold
   ) {
-    this.discovery = new CdpTargetDiscovery(
-      webContents,
-      this.responder,
-      this.sessions,
-      () => this.port
+    this.discovery = new CdpTargetDiscovery(webContents, this.responder, this.sessions, () =>
+      this.access.webSocketUrl(this.port)
     )
     this.debuggerChannel = new CdpDebuggerChannel(
       webContents,
@@ -54,8 +58,10 @@ export class CdpWsProxy {
   async start(): Promise<string> {
     await this.debuggerChannel.attachDebugger()
     return new Promise<string>((resolve, reject) => {
-      this.httpServer = createServer((req, res) => this.discovery.handleHttpRequest(req, res))
-      this.wss = new WebSocketServer({ server: this.httpServer })
+      this.httpServer = createServer((req, res) => this.handleHttpRequest(req, res))
+      // Why: noServer so unauthorized upgrades are refused before the handshake and never displace the client.
+      this.wss = new WebSocketServer({ noServer: true })
+      this.httpServer.on('upgrade', (req, socket, head) => this.handleUpgrade(req, socket, head))
       const failStart = (error: Error): void => {
         this.httpServer?.removeListener('error', onListenError)
         this.wss?.close()
@@ -99,7 +105,7 @@ export class CdpWsProxy {
         const addr = this.httpServer!.address()
         if (typeof addr === 'object' && addr) {
           this.port = addr.port
-          resolve(`ws://127.0.0.1:${this.port}`)
+          resolve(this.access.webSocketUrl(this.port))
         } else {
           failStart(new Error('Failed to bind proxy server'))
         }
@@ -123,6 +129,30 @@ export class CdpWsProxy {
 
   getPort(): number {
     return this.port
+  }
+
+  private handleHttpRequest(req: IncomingMessage, res: ServerResponse): void {
+    if (!this.access.isTrustedClientRequest(req, this.port)) {
+      res.writeHead(403)
+      res.end()
+      return
+    }
+    const path = this.access.discoveryPath(req.url)
+    if (path === null) {
+      res.writeHead(404)
+      res.end()
+      return
+    }
+    this.discovery.handleHttpRequest(path, res)
+  }
+
+  private handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+    const wss = this.wss
+    if (!wss || !this.access.isAuthorizedUpgrade(req, this.port)) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+      return
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))
   }
 
   private closeClient(): void {
@@ -230,12 +260,18 @@ export class CdpWsProxy {
       void this.navigation.reloadWithLifecycle(client, clientId, msg.params ?? {}, msg.sessionId)
       return
     }
+    // Why: clipboard-read is denied to pages by default; open it only for this guest while the
+    // agent's own clipboard read is in flight.
+    const release = isAgentClipboardReadEvaluate(msg.method, msg.params)
+      ? beginAgentClipboardRead(this.webContents.id)
+      : undefined
     this.debuggerChannel.forwardCommand(
       client,
       clientId,
       msg.method,
       msg.params ?? {},
-      msg.sessionId
+      msg.sessionId,
+      release
     )
   }
 }

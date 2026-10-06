@@ -1,4 +1,5 @@
 import { reserveNotificationCooldown } from '../../shared/notification-burst-cooldown'
+import { getAppEnvironment, hasAppEnvironment } from '../../shared/app-environment'
 import type { AgentStatusState } from '../../shared/agent-status-types'
 import type {
   MobilePushTestResult,
@@ -55,9 +56,16 @@ export class RuntimeMobileNotificationController {
   private readonly replay = new MobileNotificationReplayBuffer()
   private pushRegistrar: MobilePushRegistrar | null = null
   private dismissalStore: MobileNotificationDismissalStore | null = null
+  private dismissalQuitFlushInstalled = false
 
   configureDismissalStore(userDataPath: string): void {
+    this.dismissalStore?.flush()
     this.dismissalStore = new MobileNotificationDismissalStore(userDataPath)
+    if (!this.dismissalQuitFlushInstalled && hasAppEnvironment()) {
+      // Dismissal writes are debounced; quit persists the last ones.
+      getAppEnvironment().onWillQuit(() => this.dismissalStore?.flush())
+      this.dismissalQuitFlushInstalled = true
+    }
   }
 
   reconcileDismissedPushes(

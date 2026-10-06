@@ -7,6 +7,7 @@ import {
   type WslCapturedLoginShellCommand
 } from '../../../shared/wsl-login-shell-command'
 import { UNTRANSLATED_GIT_OUTPUT_ENV } from '../../../shared/git-output-locale'
+import { withGitRepoConfigCommandGuard } from '../../../shared/git-repo-config-command-guard'
 import type { WslGitReadEnvironment } from '../wsl-git-read-environment'
 import {
   createWslProcessGroupTermination,
@@ -58,7 +59,7 @@ export function resolveDefaultWslCli(
  */
 export function resolveCommand(
   command: string,
-  args: string[],
+  commandArgs: string[],
   cwd: string | undefined,
   wslDistroOverride?: string,
   options: {
@@ -77,6 +78,8 @@ export function resolveCommand(
     cwdFailureExitCode?: number
   } = {}
 ): ResolvedCommand {
+  // Why here: every native and WSL Git route resolves through this function.
+  const args = command === 'git' ? withGitRepoConfigCommandGuard(commandArgs) : commandArgs
   if (process.platform !== 'win32') {
     return { binary: command, args, cwd, wsl: null, wslMode: null }
   }

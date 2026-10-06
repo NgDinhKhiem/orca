@@ -546,6 +546,11 @@ describe('deployAndLaunchRelay', () => {
     )
     expect(launchCommand).not.toContain('--pty-source-credit-v1')
     expect(launchCommand).not.toContain('.pty-source-credit-policy')
+    // relay.log is created owner-only; the relay's umask (inherited by every PTY) stays untouched.
+    expect(launchCommand).toMatch(
+      /\(umask 077 && : >> '\S+relay\.log' && chmod 600 '\S+'\) && nohup /
+    )
+    expect(launchCommand?.slice(launchCommand.indexOf('nohup'))).not.toContain('umask')
   })
 
   it.each([

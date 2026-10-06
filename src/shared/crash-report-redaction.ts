@@ -3,6 +3,7 @@ import type {
   CrashReportBreadcrumbInput,
   CrashReportDetailValue
 } from './crash-reporting'
+import { COOKIE_HEADER_PATTERN, CREDENTIAL_TOKEN_PATTERNS } from './credential-token-patterns'
 
 const MAX_STRING_DETAIL_LENGTH = 240
 const MAX_STACK_DETAIL_LENGTH = 4_000
@@ -10,18 +11,19 @@ const MAX_BREADCRUMB_NAME_LENGTH = 80
 const MAX_BREADCRUMBS = 30
 
 const SECRET_PATTERNS = [
+  ...CREDENTIAL_TOKEN_PATTERNS.map(({ re }) => re),
   /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g,
-  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
-  /\bglpat-[A-Za-z0-9_-]{20,}\b/g,
   /\bsk-[A-Za-z0-9_-]{20,}\b/g,
-  /\bxox[baprs]-[A-Za-z0-9-]{10,}/g,
-  /\bAKIA[0-9A-Z]{16}\b/g,
   /\bBearer\s+[A-Za-z0-9._~+/-]{20,}/gi,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g
 ]
 const CREDENTIAL_URL_PATTERN = /\b[A-Za-z0-9._%+-]+:[A-Za-z0-9._%+-]+@(?=[^/\s]+)/g
+// Optional closing quote covers JSON keys; `[redacted]` first keeps a second pass idempotent.
 const SECRET_ASSIGNMENT_PATTERN =
-  /\b(token|access[_-]?token|refresh[_-]?token|api[_-]?key|client[_-]?secret|secret|password|account[_-]?key)\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^&\s,;]+)/gi
+  /\b((?:(?:access|refresh|client|id|private|auth|session|oauth)[_-]?)?(?:token|api[_-]?key|secret|password|account[_-]?key))["']?\s*[:=]\s*(?:\[redacted\]|"[^"\r\n]*"|'[^'\r\n]*'|[^&\s,;]+)/gi
+// The credential follows the scheme word, so redact both rather than just `Basic`.
+const AUTHORIZATION_HEADER_PATTERN =
+  /\b((?:proxy-)?authorization)\s*[:=]\s*(?:(?:Basic|Bearer|Token|Digest|Negotiate)\s+)?[^\s,;]+/gi
 
 // Quoted paths retain spaces; unquoted paths stop at whitespace to preserve prose.
 const PATH_PATTERNS = [
@@ -43,6 +45,8 @@ export function sanitizeCrashReportString(
     sanitized = sanitized.replace(pattern, '[redacted-path]')
   }
   sanitized = sanitized.replace(CREDENTIAL_URL_PATTERN, '[redacted-credential]@')
+  sanitized = sanitized.replace(COOKIE_HEADER_PATTERN, '$1: [redacted]')
+  sanitized = sanitized.replace(AUTHORIZATION_HEADER_PATTERN, '$1: [redacted]')
   sanitized = sanitized.replace(SECRET_ASSIGNMENT_PATTERN, (_match, key: string) => {
     return `${key}=[redacted]`
   })

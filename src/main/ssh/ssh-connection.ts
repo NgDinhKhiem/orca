@@ -1502,6 +1502,7 @@ export class SshConnection {
       // Why the fingerprint is still recorded: the relay uses the negotiated server key to isolate
       // shared-home install locks without comparing PIDs from an unrelated SSH host. Its format is
       // load-bearing across versions, which is a second reason never to set ssh2's `hostHash`.
+      const confirmHostKey = this.callbacks.onHostKeyConfirmRequest
       config.hostVerifier = createHostKeyVerifier({
         host: hostKeyLookupHost,
         port: config.port ?? 22,
@@ -1536,6 +1537,26 @@ export class SshConnection {
           })
         },
         isCurrentAttempt: () => !this.disposed && connectGeneration === this.connectGeneration,
+        confirmUnknownHostKey: confirmHostKey
+          ? async (request) => {
+              if (this.disposed || connectGeneration !== this.connectGeneration) {
+                return 'declined'
+              }
+              // Why: ssh2's readyTimeout is off and our startup timer must not expire under an open prompt.
+              rearmStartupTimer(SSH_KEYBOARD_INTERACTIVE_READY_TIMEOUT_MS)
+              try {
+                return await confirmHostKey(
+                  this.target.id,
+                  request,
+                  this.credentialAbortController.signal
+                )
+              } finally {
+                if (!settled) {
+                  rearmStartupTimer(config.readyTimeout ?? CONNECT_TIMEOUT_MS)
+                }
+              }
+            }
+          : undefined,
         onDecision: (decision) => {
           // Empty when the blob was not a readable host key: there is nothing to identify, and the
           // relay uses this fingerprint to isolate install locks, so blanking it would be worse

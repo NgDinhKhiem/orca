@@ -129,10 +129,20 @@ export function createSsh2Module(): Ssh2ModuleMock {
       )?.hostVerifier
       const presentedHostKey = ssh2Mock.presentedHostKey ?? VALID_ED25519_HOST_KEY
       ssh2Mock.lastHostKeyAccepted = undefined
+      let deferredHandshake: ((ok: boolean) => void) | undefined
       hostVerifier?.(presentedHostKey, (ok) => {
         ssh2Mock.lastHostKeyAccepted = ok
+        deferredHandshake?.(ok)
       })
-      if (ssh2Mock.lastHostKeyAccepted === false) {
+      // Why: a verifier that asks the user decides later; ssh2 holds the handshake until it does.
+      if (hostVerifier && ssh2Mock.lastHostKeyAccepted === undefined) {
+        deferredHandshake = (ok) => this.continueHandshake(ok)
+        return
+      }
+      this.continueHandshake(ssh2Mock.lastHostKeyAccepted !== false)
+    }
+    private continueHandshake(hostKeyAccepted: boolean) {
+      if (!hostKeyAccepted) {
         // ssh2 aborts the handshake when the verifier denies; a mock that carried on to 'ready'
         // would let a rejected host key look like a successful connect.
         this.connectTimer = setTimeout(() => {

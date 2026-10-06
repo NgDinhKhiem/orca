@@ -1,5 +1,5 @@
 import { isImeOwnedKeyboardEvent } from '@/lib/ime-composition-keyboard-event'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, Save } from 'lucide-react'
 import { computeEditorFontSize } from '@/lib/editor-font-zoom'
 import { useAppStore } from '@/store'
@@ -18,11 +18,10 @@ import { editorShortcutMatches } from './editor-shortcuts'
 import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import { getConnectionId } from '@/lib/connection-context'
-import { IpynbCellToolbar, IpynbToolbarButton } from './IpynbCellToolbar'
-import { IpynbCellSource } from './IpynbCellEditor'
-import { IpynbCellRunOutputs, IpynbCellRunPrompt } from './IpynbCellRun'
+import { IpynbToolbarButton } from './IpynbCellToolbar'
+import { IpynbCellRow, type IpynbCellRowActions } from './IpynbCellRow'
 import { IpynbKernelToolbar } from './IpynbKernelToolbar'
-import { parseIpynb } from './ipynb-parse'
+import { parseIpynbReusingKnown, type ParsedIpynb } from './ipynb-parse'
 import {
   getIpynbCellKey,
   hasIpynbSourceDraft,
@@ -55,9 +54,9 @@ export default function IpynbViewer({
   const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
   const rootPath = useAppStore((s) => findWorktreeById(s.worktreesByRepo, worktreeId)?.path ?? null)
   const [editingCellKey, setEditingCellKey] = useState<string | null>(null)
-  const parsed = useMemo(() => {
+  const parsed = useMemo((): { notebook: ParsedIpynb | null; error: string | null } => {
     try {
-      return { notebook: parseIpynb(content), error: null as string | null }
+      return { notebook: parseIpynbReusingKnown(content), error: null }
     } catch (error) {
       return {
         notebook: null,
@@ -113,29 +112,47 @@ export default function IpynbViewer({
     [saveNotebook]
   )
 
-  // Shift+Enter runs a cell and moves to the next; Cmd/Ctrl+Enter runs it in place.
-  const handleCellKeyDownCapture = (
-    event: React.KeyboardEvent<HTMLElement>,
-    index: number
-  ): void => {
-    const mod = getShortcutPlatform() === 'darwin' ? event.metaKey : event.ctrlKey
-    // Exactly one of Shift or Cmd/Ctrl.
-    if (
-      isImeOwnedKeyboardEvent(event) ||
-      event.key !== 'Enter' ||
-      event.altKey ||
-      event.shiftKey === mod
-    ) {
-      return
+  // Why: runCell is rebuilt every render; rows reach it through a ref so their props stay stable.
+  const runCellRef = useRef(execution.runCell)
+  useLayoutEffect(() => {
+    runCellRef.current = execution.runCell
+  })
+  const cellRowActions = useMemo((): IpynbCellRowActions => {
+    const run = (index: number): void => runCellRef.current(index)
+    return {
+      activate: (cellKey) => setEditingCellKey(cellKey),
+      deactivate: (cellKey) =>
+        setEditingCellKey((current) => (current === cellKey ? null : current)),
+      changeSource: updateCellSource,
+      run,
+      // Shift+Enter runs a cell and moves to the next; Cmd/Ctrl+Enter runs it in place.
+      keyDownCapture: (event, index) => {
+        const mod = getShortcutPlatform() === 'darwin' ? event.metaKey : event.ctrlKey
+        // Exactly one of Shift or Cmd/Ctrl.
+        if (
+          isImeOwnedKeyboardEvent(event) ||
+          event.key !== 'Enter' ||
+          event.altKey ||
+          event.shiftKey === mod
+        ) {
+          return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        run(index)
+        if (event.shiftKey) {
+          // Focusing the next cell's preview also ends editing here, so repeated presses walk the notebook.
+          event.currentTarget.nextElementSibling
+            ?.querySelector<HTMLElement>('[tabindex="0"]')
+            ?.focus()
+        }
+      },
+      changeKind: updateCellKind,
+      insert: insertCell,
+      move: moveCell,
+      remove: deleteCell
     }
-    event.preventDefault()
-    event.stopPropagation()
-    execution.runCell(index)
-    if (event.shiftKey) {
-      // Focusing the next cell's preview also ends editing here, so repeated presses walk the notebook.
-      event.currentTarget.nextElementSibling?.querySelector<HTMLElement>('[tabindex="0"]')?.focus()
-    }
-  }
+  }, [updateCellSource, updateCellKind, insertCell, moveCell, deleteCell])
 
   if (parsed.error || !parsed.notebook) {
     return (
@@ -203,45 +220,17 @@ export default function IpynbViewer({
               ? (sourceDrafts[cellKey] ?? '')
               : cell.source
             return (
-              <section
+              <IpynbCellRow
                 key={cellKey}
-                className="group relative flex gap-2 py-1.5"
-                onKeyDownCapture={(event) => handleCellKeyDownCapture(event, index)}
-              >
-                {/* Mirrors the code surface's border and padding so the count shares the first line's box. */}
-                <div className="flex w-12 shrink-0 justify-center border-y border-transparent py-1">
-                  {cell.kind === 'code' ? (
-                    <IpynbCellRunPrompt
-                      filePath={filePath}
-                      cellKey={cellKey}
-                      executionCount={cell.executionCount}
-                      onRun={() => execution.runCell(index)}
-                    />
-                  ) : null}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <IpynbCellSource
-                    cell={cell}
-                    source={source}
-                    active={editingCellKey === cellKey}
-                    onActivate={() => setEditingCellKey(cellKey)}
-                    onDeactivate={() =>
-                      setEditingCellKey((current) => (current === cellKey ? null : current))
-                    }
-                    onChange={(nextSource) => updateCellSource(index, nextSource)}
-                  />
-                  <IpynbCellRunOutputs filePath={filePath} cellKey={cellKey} cell={cell} />
-                </div>
-                <IpynbCellToolbar
-                  kind={cell.kind}
-                  canMoveUp={index > 0}
-                  canMoveDown={index < notebook.cells.length - 1}
-                  onKindChange={(kind) => updateCellKind(index, kind)}
-                  onInsert={(offset, kind) => insertCell(index + offset, kind)}
-                  onMove={(direction) => moveCell(index, direction)}
-                  onDelete={() => deleteCell(index)}
-                />
-              </section>
+                filePath={filePath}
+                cell={cell}
+                cellKey={cellKey}
+                index={index}
+                isLast={index === notebook.cells.length - 1}
+                source={source}
+                active={editingCellKey === cellKey}
+                actions={cellRowActions}
+              />
             )
           })
         )}

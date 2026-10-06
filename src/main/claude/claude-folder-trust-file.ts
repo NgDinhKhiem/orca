@@ -16,6 +16,12 @@ import { renameFileWithWindowsRetry } from '../codex-accounts/fs-utils'
 import { runKeyedSerializedOperation } from '../cli/keyed-promise-queue'
 import { parseWslUncPath } from '../../shared/wsl-paths'
 import { runWslProcess } from '../wsl/wsl-runner'
+import { forgetCachedClaudeConfig } from './claude-config-projection-cache'
+import {
+  isPlainJsonObject,
+  isTrustedClaudeProjectEntry,
+  planClaudeFolderTrust
+} from './claude-folder-trust-probe'
 import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth/runtime-auth-types'
 
 export type ClaudeTrustPathStyle = 'posix' | 'win32'
@@ -71,10 +77,6 @@ export function resolveClaudeGlobalConfigFile(args: {
   return join(args.env.CLAUDE_CONFIG_DIR || args.homeDir, `.claude${suffix}.json`)
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 export type ClaudeFolderTrustChange =
   | { kind: 'unchanged' }
   | { kind: 'refuse' }
@@ -84,20 +86,16 @@ export function applyClaudeFolderTrust(
   config: Record<string, unknown>,
   folderKeys: readonly string[]
 ): ClaudeFolderTrustChange {
-  if (config.projects !== undefined && !isPlainObject(config.projects)) {
+  if (config.projects !== undefined && !isPlainJsonObject(config.projects)) {
     return { kind: 'refuse' }
   }
   const projects: Record<string, unknown> = { ...config.projects }
-  const alreadyTrusted = folderKeys.some((key) => {
-    const entry = projects[key]
-    return isPlainObject(entry) && entry.hasTrustDialogAccepted === true
-  })
-  if (alreadyTrusted) {
+  if (folderKeys.some((key) => isTrustedClaudeProjectEntry(projects[key]))) {
     return { kind: 'unchanged' }
   }
   for (const key of folderKeys) {
     const entry = projects[key]
-    projects[key] = isPlainObject(entry)
+    projects[key] = isPlainJsonObject(entry)
       ? { ...entry, hasTrustDialogAccepted: true }
       : { hasTrustDialogAccepted: true }
   }
@@ -139,7 +137,7 @@ function readConfigAt(
 function readConfigObject(target: string): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(readFileSync(target, 'utf-8'))
-    return isPlainObject(parsed) ? parsed : null
+    return isPlainJsonObject(parsed) ? parsed : null
   } catch {
     return null
   }
@@ -211,14 +209,14 @@ async function grantClaudeFolderTrustNow(args: {
   configFile: string
   folderKeys: readonly string[]
 }): Promise<ClaudeFolderTrustOutcome> {
-  const probe = readConfigAt(resolveConfigTarget(args.configFile))
-  if (typeof probe === 'string') {
-    return probe
+  const probe = resolveConfigTarget(args.configFile)
+  if (probe.kind !== 'file') {
+    return probe.kind === 'missing' ? 'missing-config' : 'unreadable'
   }
   // Why: most launches need nothing, so skip Claude's lock unless a write is due.
-  const planned = applyClaudeFolderTrust(probe.config, args.folderKeys).kind
+  const planned = planClaudeFolderTrust(probe.path, args.folderKeys)
   if (planned !== 'changed') {
-    return planned === 'refuse' ? 'unreadable' : 'unchanged'
+    return planned
   }
 
   // Why before the lock: a WSL guest's mode takes a guest process to copy, and Claude's
@@ -240,7 +238,7 @@ async function grantClaudeFolderTrustNow(args: {
     }
     try {
       // Why: read → rename stays synchronous so Orca's own synchronous auth writer to
-      // this file cannot interleave and lose an update.
+      // this file cannot interleave and lose an update. Never cached: Claude writes it too.
       const current = readConfigAt(resolveConfigTarget(args.configFile))
       if (typeof current === 'string') {
         return current
@@ -257,6 +255,8 @@ async function grantClaudeFolderTrustNow(args: {
         return 'unchanged'
       }
       replaceConfig(replacement, change.config)
+      forgetCachedClaudeConfig(replacement.target)
+      forgetCachedClaudeConfig(args.configFile)
       return 'granted'
     } finally {
       await release().catch(() => {})

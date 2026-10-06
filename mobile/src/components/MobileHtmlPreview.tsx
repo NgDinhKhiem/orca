@@ -3,6 +3,10 @@ import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { WebView } from 'react-native-webview'
 import { Code, Eye } from 'lucide-react-native'
 import { openExternalLink } from '../platform/external-link'
+import {
+  MOBILE_HTML_PREVIEW_JAVASCRIPT_ENABLED,
+  decideHtmlPreviewNavigation
+} from './html-preview-native-navigation'
 import { colors, spacing, typography } from '../theme/mobile-theme'
 
 export type MobileHtmlPreviewProps = {
@@ -11,10 +15,9 @@ export type MobileHtmlPreviewProps = {
   renderSource: () => React.ReactNode
 }
 
-// Renders an agent-produced HTML artifact in a sandboxed WebView, with a
+// Renders an agent-produced HTML artifact in a script-free WebView, with a
 // Preview/Source toggle. Navigation is locked: only the initial inline document
-// loads in-place; any link tap opens externally so a page can't hijack the
-// review surface.
+// loads in-place; only a tapped http(s)/mailto link opens externally.
 export function MobileHtmlPreview({ html, renderSource }: MobileHtmlPreviewProps) {
   const [mode, setMode] = useState<'preview' | 'source'>('preview')
 
@@ -54,16 +57,15 @@ export function MobileHtmlPreview({ html, renderSource }: MobileHtmlPreviewProps
           style={styles.webview}
           originWhitelist={['*']}
           source={{ html }}
-          javaScriptEnabled
-          // Why: only the initial about:blank inline-HTML load is allowed in
-          // place; a tapped link opens in the system browser instead of
-          // navigating the review WebView away from the artifact.
+          javaScriptEnabled={MOBILE_HTML_PREVIEW_JAVASCRIPT_ENABLED}
+          // Why: keeps target=_blank taps in this view so the policy below sees them.
+          setSupportMultipleWindows={false}
           onShouldStartLoadWithRequest={(request) => {
-            if (request.url === 'about:blank' || request.url.startsWith('data:')) {
-              return true
+            const decision = decideHtmlPreviewNavigation(request)
+            if (decision.openExternally) {
+              openExternalLink(decision.openExternally)
             }
-            openExternalLink(request.url)
-            return false
+            return decision.loadInPlace
           }}
         />
       ) : (

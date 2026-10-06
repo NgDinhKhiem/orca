@@ -131,17 +131,50 @@ export async function getDaemonLaunchIdentity(
   return commandLine.includes(expectedEntryPath) ? 'match' : 'mismatch'
 }
 
+// Why: the replacement preflight asks for launch identity and bundle staleness together, and
+// on Windows each verification is a PowerShell CIM spawn. Concurrent reads of the same pid file
+// share the one in flight; once it settles the next caller verifies afresh.
+let inFlightVerification: {
+  key: string
+  pending: Promise<ParsedDaemonPid | null>
+} | null = null
+
 export async function readVerifiedDaemonPid(
   runtimeDir: string,
   socketPath: string,
   tokenPath: string,
   protocolVersion = PROTOCOL_VERSION
 ): Promise<ParsedDaemonPid | null> {
+  let pidFileText: string
+  try {
+    pidFileText = readFileSync(getDaemonPidPath(runtimeDir, protocolVersion), 'utf8')
+  } catch {
+    return null
+  }
+  const key = JSON.stringify([runtimeDir, socketPath, tokenPath, protocolVersion, pidFileText])
+  if (inFlightVerification?.key === key) {
+    return inFlightVerification.pending
+  }
+  const entry: NonNullable<typeof inFlightVerification> = {
+    key,
+    pending: verifyDaemonPidFile(pidFileText, socketPath, tokenPath).finally(() => {
+      if (inFlightVerification === entry) {
+        inFlightVerification = null
+      }
+    })
+  }
+  inFlightVerification = entry
+  return entry.pending
+}
+
+async function verifyDaemonPidFile(
+  pidFileText: string,
+  socketPath: string,
+  tokenPath: string
+): Promise<ParsedDaemonPid | null> {
   let parsedPid: ParsedDaemonPid | null
   try {
-    parsedPid = parseDaemonPidFile(
-      readFileSync(getDaemonPidPath(runtimeDir, protocolVersion), 'utf8')
-    )
+    parsedPid = parseDaemonPidFile(pidFileText)
   } catch {
     return null
   }

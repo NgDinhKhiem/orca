@@ -163,7 +163,9 @@ export const BROWSER_CORE_METHODS = [
   defineMethod({
     name: 'browser.profileImportFromBrowser',
     params: ProfileImportFromBrowser,
-    handler: async (params, { runtime }) => runtime.browserProfileImportFromBrowser(params)
+    // Why: pairedDeviceId marks a paired client's UI; every other caller must be confirmed on the host.
+    handler: async (params, { runtime, pairedDeviceId }) =>
+      runtime.browserProfileImportFromBrowser(params, { pairedDeviceId })
   }),
   defineMethod({
     name: 'browser.profileClearDefaultCookies',

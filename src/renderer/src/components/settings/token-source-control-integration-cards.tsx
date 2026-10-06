@@ -86,8 +86,8 @@ export function AzureDevOpsIntegrationCard(): React.JSX.Element {
                   )}
                 </span>{' '}
                 {translate(
-                  'auto.components.settings.token.source.control.integration.cards.7bd345e3f6',
-                  'only when Orca cannot derive the API base URL from the git remote.'
+                  'auto.components.settings.token.source.control.integration.cards.26e0713761',
+                  'for Azure DevOps Server. Orca only sends the token to dev.azure.com, visualstudio.com, or that server.'
                 )}
               </>
             ) : (
@@ -200,8 +200,31 @@ export function GiteaIntegrationCard(): React.JSX.Element {
                   )}
                 </span>{' '}
                 {translate(
-                  'auto.components.settings.token.source.control.integration.cards.60708f23da',
-                  'only when Orca cannot derive the API URL from the remote.'
+                  'auto.components.settings.token.source.control.integration.cards.e74c14b0d9',
+                  'to your Gitea server. Orca only sends the token to that server.'
+                )}
+              </>
+            ) : !statuses.giteaBaseUrl ? (
+              <>
+                <span className="font-mono text-[11px]">
+                  {translate(
+                    'auto.components.settings.token.source.control.integration.cards.6d5c2a3005',
+                    'ORCA_GITEA_TOKEN'
+                  )}
+                </span>{' '}
+                {translate(
+                  'auto.components.settings.token.source.control.integration.cards.ea5a261e66',
+                  'is set, but Orca only sends it to the server in'
+                )}{' '}
+                <span className="font-mono text-[11px]">
+                  {translate(
+                    'auto.components.settings.token.source.control.integration.cards.709057ad91',
+                    'ORCA_GITEA_API_BASE_URL'
+                  )}
+                </span>
+                {translate(
+                  'auto.components.settings.token.source.control.integration.cards.7943e89a47',
+                  '. Set it to your Gitea server URL, then restart Orca.'
                 )}
               </>
             ) : (

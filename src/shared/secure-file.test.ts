@@ -582,6 +582,29 @@ describe('hardenSecurePath', () => {
     expect(syncTargets.filter((entry) => entry === userDataPath)).toHaveLength(0)
   })
 
+  it('restricts a freshly created temp file without a verify that cannot pass', () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-secure-file-'))
+    tempDirs.push(userDataPath)
+    const targetPath = join(userDataPath, 'secret.json')
+
+    expect(writeSecureFile(targetPath, 'contents')).toBe(true)
+
+    const icaclsStages = (matches: (path: string) => boolean): string[] =>
+      vi
+        .mocked(runProcessSync)
+        .mock.calls.map(([spec]) => spec)
+        .filter((spec) => spec.program.endsWith('icacls.exe') && matches(spec.args?.[0] ?? ''))
+        .map(
+          (spec) =>
+            ['/save', '/reset', '/grant:r'].find((stage) => spec.args?.includes(stage)) ?? ''
+        )
+    // A new file only ever carries an inherited DACL, so the closing verify is the one that counts.
+    expect(icaclsStages((path) => path !== targetPath)).toEqual(['/reset', '/grant:r', '/save'])
+    // The published path still opens with its own verify (the fake does not carry ACLs across rename).
+    expect(icaclsStages((path) => path === targetPath)[0]).toBe('/save')
+  })
+
   // Regression test: #4901 — env-store reads at ~2×/s caused an ACL-spawn storm because the
   // parent directory mtime churned (every secure write updates it), so the mtime-keyed cache
   // never matched. Directories must be path-cached for the process lifetime.
@@ -769,13 +792,14 @@ describe('hardenSecurePath', () => {
 })
 
 /**
- * Every harden opens with a `/save` verify; one that has work to do then runs `/reset`, `/grant:r`
- * and a closing `/save`. Counting only the *opening* verify keeps "one harden = one entry"
+ * A harden opens with a `/save` verify (or, for a freshly created file, directly with `/reset`);
+ * one that has work to do then runs `/reset`, `/grant:r` and a closing `/save`. Counting only the *opening* verify keeps "one harden = one entry"
  * regardless of which of the two shapes it took.
  */
 function hardenInitiations(specs: FakeSpec[]): { args?: readonly string[] }[] {
   const initiations: { args?: readonly string[] }[] = []
   const awaitingClosingVerify = new Set<string>()
+  const openedByVerify = new Set<string>()
   for (const spec of specs) {
     if (!spec.program.endsWith('icacls.exe')) {
       continue
@@ -783,11 +807,17 @@ function hardenInitiations(specs: FakeSpec[]): { args?: readonly string[] }[] {
     const path = spec.args?.[0] ?? ''
     if (spec.args?.includes('/grant:r')) {
       awaitingClosingVerify.add(path)
+    } else if (spec.args?.includes('/reset')) {
+      // A freshly created temp file skips the opening verify and starts at /reset.
+      if (!openedByVerify.delete(path)) {
+        initiations.push(spec)
+      }
     } else if (spec.args?.includes('/save')) {
       if (awaitingClosingVerify.has(path)) {
         awaitingClosingVerify.delete(path)
       } else {
         initiations.push(spec)
+        openedByVerify.add(path)
       }
     }
   }

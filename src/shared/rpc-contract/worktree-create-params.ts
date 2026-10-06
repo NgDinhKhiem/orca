@@ -100,6 +100,17 @@ export const WorktreeCreate = z
       )
       .pipe(z.union([z.enum(['run', 'skip', 'inherit']), z.undefined()]))
       .optional(),
+    // Why: a paired client's setup trust lives on the client; the host gates worktree setup on it.
+    setupTrust: z
+      .object({
+        contentHash: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .optional(),
+        repoWide: z.boolean().optional()
+      })
+      .optional()
+      .catch(undefined),
     // Why: some clients (e.g. desktop) pass a pre-built launch command so the
     // first terminal pane launches the selected agent instead of an idle shell.
     // Clients that can't quote for the host shell send `startupAgent` instead.

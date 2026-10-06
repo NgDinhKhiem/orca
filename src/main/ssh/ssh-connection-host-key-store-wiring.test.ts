@@ -55,15 +55,15 @@ vi.mock('ssh2', () => {
           | undefined
       )?.hostVerifier
       hostKeyAccepted = undefined
+      // Why on the callback: a verifier that asks the user decides later, and ssh2 waits for it.
       hostVerifier?.(presentedHostKey, (ok) => {
         hostKeyAccepted = ok
+        setTimeout(() => {
+          for (const handler of eventHandlers.get(ok ? 'ready' : 'error') ?? []) {
+            handler(new Error('All configured authentication methods failed'))
+          }
+        }, 0)
       })
-      setTimeout(() => {
-        for (const handler of eventHandlers.get(hostKeyAccepted === false ? 'error' : 'ready') ??
-          []) {
-          handler(new Error('All configured authentication methods failed'))
-        }
-      }, 0)
     }
   }
   class MockBaseAgent {}
@@ -83,6 +83,7 @@ vi.mock('./ssh-config-parser', async (importOriginal) => ({
 import { SshConnection } from './ssh-connection'
 import { initSshHostKeyStoreFile, isTrusted, loadTrustedHostKeys } from './ssh-host-key-store'
 import type { SshTarget } from '../../shared/ssh-types'
+import type { HostKeyConfirmation } from './ssh-host-key-verifier'
 
 const target = (overrides?: Partial<SshTarget>): SshTarget => ({
   id: 'target-1',
@@ -93,7 +94,11 @@ const target = (overrides?: Partial<SshTarget>): SshTarget => ({
   ...overrides
 })
 
-const callbacks = () => ({ onStateChange: vi.fn() })
+// Why confirmed: the fake host is unknown under the default `ask`, so recording needs the user's yes.
+const callbacks = (answer: HostKeyConfirmation = 'confirmed') => ({
+  onStateChange: vi.fn(),
+  onHostKeyConfirmRequest: vi.fn(async () => answer)
+})
 
 let profileDir: string
 
@@ -199,6 +204,16 @@ describe('recording a first-contact host key', () => {
       }
     }
   )
+
+  it('records nothing when the user declines an unknown host', async () => {
+    await expect(new SshConnection(target(), callbacks('declined')).connect()).rejects.toThrow(
+      /host key verification failed/i
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(hostKeyAccepted).toBe(false)
+    expect(await loadTrustedHostKeys()).toEqual([])
+  })
 
   // A record per launch would accumulate, and a stale one would eventually read as a mismatch
   // against a VM that is behaving exactly as designed.

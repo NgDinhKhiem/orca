@@ -1,5 +1,6 @@
 import { ensureElectronProxyFromEnvironment } from '../network/proxy-settings'
 import { getMainHttpClient } from '../network/http-client'
+import { fetchWithCredentialScopedRedirects } from '../network/credential-scoped-redirect-fetch'
 import { withSpan } from '../observability/tracer'
 import type { JiraAuthType, JiraSite } from '../../shared/jira-types'
 
@@ -73,7 +74,12 @@ async function jiraFetch(url: string, init: RequestInit): Promise<Response> {
         // Why the port: on the desktop this is Electron's net.fetch, which follows
         // Chromium proxy/session state and avoids undici's stale keep-alive sockets
         // after VPN path changes. A host without Chromium gets Node's fetch instead.
-        return await httpClient.fetch(url, init)
+        // Redirects are followed here because net.fetch would forward Authorization cross-origin.
+        return await fetchWithCredentialScopedRedirects(
+          (requestUrl, requestInit) => httpClient.fetch(requestUrl, requestInit),
+          url,
+          init
+        )
       } catch (error) {
         span.setAttribute(
           'jira.transportErrorName',

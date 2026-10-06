@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RelayDispatcher } from './dispatcher'
 import { relayWriterControlReserve } from './dispatcher-writer-admission'
 import { encodeJsonRpcFrame, MessageType, type JsonRpcRequest } from './protocol'
@@ -106,8 +106,19 @@ describe('workspace snapshot publication over a bounded producer frame', () => {
       }
     }
     dispatcher.feed(encodeJsonRpcFrame(req, id, 0))
-    await Promise.resolve()
-    await Promise.resolve()
+    // The patch persists through asynchronous file I/O before it publishes and replies.
+    await vi.waitFor(() => {
+      expect(
+        written.some((buf) => {
+          if (buf[0] !== MessageType.Regular) {
+            return false
+          }
+          const len = buf.readUInt32BE(9)
+          const frame: unknown = JSON.parse(buf.subarray(13, 13 + len).toString('utf-8'))
+          return typeof frame === 'object' && frame !== null && 'id' in frame && frame.id === id
+        })
+      ).toBe(true)
+    })
   }
 
   it('publishes the snapshot inline while it fits the producer frame', async () => {

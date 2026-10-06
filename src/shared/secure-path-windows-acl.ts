@@ -240,13 +240,19 @@ async function verifyAsync(plan: AclPlan): Promise<string | null> {
   }
 }
 
-export function restrictWindowsPathSync(targetPath: string, isDirectory: boolean): boolean {
+export function restrictWindowsPathSync(
+  targetPath: string,
+  isDirectory: boolean,
+  options: { freshlyCreated?: boolean } = {}
+): boolean {
   const plan = planFor(targetPath, isDirectory)
   if (!plan) {
     return false
   }
   // Why sync: the file must not be published until its ACL is actually restricted (read path stays async, #4901).
-  if (verifySync(plan) === null) {
+  // A file this process just created carries only an inherited DACL, which can never verify; the
+  // closing verify below is still the check that decides the outcome.
+  if (!options.freshlyCreated && verifySync(plan) === null) {
     return true
   }
   for (const [stage, args] of [

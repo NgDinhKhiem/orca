@@ -17,6 +17,7 @@ import {
   type RelayRegion
 } from '@orca-cloud/relay-contract'
 import { Hono, type Context } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { SignJWT } from 'jose'
 import { z } from 'zod'
 import {
@@ -37,7 +38,12 @@ import {
 } from './assignment-store.js'
 import { AssignmentRejectionLogWindow } from './assignment-rejection-log-window.js'
 import { CELL_ADMISSION_STATES } from './cell-admission-selector.js'
-import { RELAY_MAX_CELL_CAPACITY_REQUESTS, type RelayConfig } from './config.js'
+import { ClientIpRateLimiter, readForwardedClientIp } from './client-ip-rate-limit.js'
+import {
+  RELAY_MAX_CELL_CAPACITY_REQUESTS,
+  RELAY_PUBLIC_RESOLVE_REQUESTS_PER_MINUTE_PER_IP,
+  type RelayConfig
+} from './config.js'
 import type { RelayCredentialStore } from './credential-store.js'
 import { isRelayDatabaseTransientError } from './database.js'
 import {
@@ -264,6 +270,20 @@ export function createRelayApp(
     if (!rejectionLogWindow.admit(`${entry.route}:${entry.lane}:${entry.reason}`, entry)) return
     logAssignmentRejection(entry)
   }
+  // Hono's body limit, not a Content-Length check: a chunked body declares no
+  // length, and req.json() would otherwise buffer all of it.
+  app.use(
+    '*',
+    bodyLimit({
+      maxSize: RELAY_PROTOCOL_LIMITS.maxHttpBodyBytes,
+      onError: (context) => context.json({ error: 'request_too_large' }, 413)
+    })
+  )
+  // /v1/resolve is unauthenticated, so each client address gets its own budget
+  // before any request can occupy the shared reserved lane.
+  const resolveClientIps = new ClientIpRateLimiter({
+    capacity: RELAY_PUBLIC_RESOLVE_REQUESTS_PER_MINUTE_PER_IP
+  })
   app.use('/v1/admin/*', async (context, next) => {
     if (
       context.req.path === '/v1/admin/cell-heartbeat' ||
@@ -312,9 +332,6 @@ export function createRelayApp(
     if (!bearer) return context.json({ error: 'invalid_token' }, 401)
     const claims = await verifyRelayToken(bearer)
     if (!claims) return context.json({ error: 'invalid_token' }, 401)
-    if (Number(context.req.header('content-length') ?? 0) > 4 * 1024) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AssignmentRequestSchema.safeParse(await context.req.json().catch(() => null))
     if (!body.success) return context.json({ error: 'invalid_request' }, 400)
     if (body.data.relayHostId !== claims.relayHostId) {
@@ -526,40 +543,41 @@ export function createRelayApp(
   app.post('/v1/resolve', async (context) => {
     if (config.role === 'cell') return context.json({ error: 'director_only' }, 404)
     if (!config.publicAssignmentsEnabled) return rejectPublicAssignment(context)
-    if (
-      Number(context.req.header('content-length') ?? 0) > RELAY_PROTOCOL_LIMITS.maxHttpBodyBytes
-    ) {
-      return context.json({ error: 'request_too_large' }, 413)
+    const clientIp =
+      readForwardedClientIp(context.req.header('x-forwarded-for'), config.trustedProxyHops ?? 0) ??
+      'unknown'
+    if (!resolveClientIps.allow(clientIp)) {
+      context.header('Retry-After', String(config.publicAssignmentRetryAfterSeconds))
+      return context.json({ error: 'rate_limited' }, 429)
     }
     const body = ResolveRequestSchema.safeParse(await context.req.json().catch(() => null))
     if (!body.success) return context.json({ error: 'invalid_request' }, 400)
+    const { relayHostId, resumeToken } = body.data
     let rejection: AssignmentAdmissionRejection | undefined
-    const admission = await publicAssignmentAdmission.acquireReserved(
-      body.data.relayHostId,
-      (reason) => {
-        rejection = reason
-      }
-    )
-    if (!admission) {
-      logAdmissionRejection({
-        route: 'resolve',
-        lane: 'placement',
-        hinted: false,
-        relayHostId: body.data.relayHostId,
-        reason: rejection
-      })
-      return rejectPublicAssignment(context)
-    }
+    let lease: { release(): void } | undefined
     try {
-      const resolved = await operations.store.resolveResume(
-        body.data.relayHostId,
-        body.data.resumeToken
+      const admission = await publicAssignmentAdmission.acquireReserved(
+        relayHostId,
+        async () => await operations.store.resolveResume(relayHostId, resumeToken),
+        (reason) => {
+          rejection = reason
+        }
       )
-      if (!resolved) return context.json({ error: 'invalid_credential' }, 401)
-      const identity = {
-        userId: resolved.userId,
-        relayHostId: body.data.relayHostId
+      if (admission.status === 'unauthenticated') {
+        return context.json({ error: 'invalid_credential' }, 401)
       }
+      if (admission.status === 'rejected') {
+        logAdmissionRejection({
+          route: 'resolve',
+          lane: 'placement',
+          hinted: false,
+          relayHostId,
+          reason: rejection
+        })
+        return rejectPublicAssignment(context)
+      }
+      lease = admission.lease
+      const identity = { userId: admission.credential.userId, relayHostId }
       // This also migrates credentials created by the staging-only combined service.
       const assignment =
         (await operations.assignments.resolve(identity)) ??
@@ -576,7 +594,7 @@ export function createRelayApp(
           route: 'resolve',
           lane: 'none',
           hinted: false,
-          relayHostId: body.data.relayHostId,
+          relayHostId,
           reason: operationError(error),
           ...homeCellRejectionDetail(error)
         })
@@ -590,7 +608,7 @@ export function createRelayApp(
       if (isRelayDatabaseTransientError(error)) return rejectPublicAssignment(context)
       throw error
     } finally {
-      admission.release()
+      lease?.release()
     }
   })
   app.post('/v1/admin/drain', async (context) => {
@@ -620,9 +638,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyRegionalRehomeToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = IdleRegionalRehomeCommandSchema.safeParse(
       await context.req.json().catch(() => null)
     )
@@ -647,9 +662,6 @@ export function createRelayApp(
     const bearer = readBearer(context.req.header('authorization'))
     if (!bearer || !(await verifyRegionalRehomeToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = RegionalHostDrainSchema.safeParse(
       await context.req.json().catch(() => null)
@@ -696,9 +708,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = RuntimeStatusSchema.safeParse(await context.req.json().catch(() => null))
     if (!body.success) return context.json({ error: 'invalid_request' }, 400)
     return context.json({
@@ -733,9 +742,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyRuntimeToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = CellHeartbeatSchema.safeParse(await context.req.json().catch(() => null))
     if (!body.success) return context.json({ error: 'invalid_request' }, 400)
     try {
@@ -750,9 +756,6 @@ export function createRelayApp(
     const bearer = readBearer(context.req.header('authorization'))
     if (!bearer || !(await verifyRuntimeToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = CellRegionalRehomeStatusSchema.safeParse(
       await context.req.json().catch(() => null)
@@ -783,9 +786,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer, context.req.path))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = RegionalRehomeControlSchema.safeParse(
       await context.req.json().catch(() => null)
     )
@@ -809,9 +809,6 @@ export function createRelayApp(
     const bearer = readBearer(context.req.header('authorization'))
     if (!bearer || !(await verifyAdminToken(bearer, context.req.path))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = RegionalRehomeTrustProbeSchema.safeParse(
       await context.req.json().catch(() => null)
@@ -854,9 +851,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminAssignmentMoveSchema.safeParse(await context.req.json().catch(() => null))
     if (!body.success) return context.json({ error: 'invalid_request' }, 400)
     try {
@@ -875,9 +869,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminMigrationCompleteSchema.safeParse(await context.req.json().catch(() => null))
     if (!body.success) return context.json({ error: 'invalid_request' }, 400)
     try {
@@ -895,9 +886,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminRegisteredCellMigrationSupersedeSchema.safeParse(
       await context.req.json().catch(() => null)
@@ -921,9 +909,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminAssignmentMoveSchema.safeParse(await context.req.json().catch(() => null))
     if (!body.success) return context.json({ error: 'invalid_request' }, 400)
     try {
@@ -942,9 +927,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminAdmissionSelectorApplySchema.safeParse(
       await context.req.json().catch(() => null)
     )
@@ -961,9 +943,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminStagingAsiaProofAdmissionApplySchema.safeParse(
       await context.req.json().catch(() => null)
@@ -987,9 +966,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminAdmissionSelectorStatusSchema.safeParse(
       await context.req.json().catch(() => null)
     )
@@ -1008,9 +984,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminAdmissionSelectorAddMigrationCellsSchema.safeParse(
       await context.req.json().catch(() => null)
@@ -1040,9 +1013,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminCellStateSchema.safeParse(await context.req.json().catch(() => null))
     if (!body.success) return context.json({ error: 'invalid_request' }, 400)
     try {
@@ -1065,9 +1035,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminCellFenceLegacyAdoptionSchema.safeParse(
       await context.req.json().catch(() => null)
     )
@@ -1088,9 +1055,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminCellFenceLegacyAdoptionCommitSchema.safeParse(
       await context.req.json().catch(() => null)
     )
@@ -1110,9 +1074,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminCellFenceAttestSchema.safeParse(
       await context.req.json().catch(() => null)
@@ -1140,9 +1101,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminCellFenceAttemptPrepareSchema.safeParse(
       await context.req.json().catch(() => null)
     )
@@ -1160,9 +1118,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminCellFenceAttemptUpdateSchema.safeParse(
       await context.req.json().catch(() => null)
@@ -1186,9 +1141,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminCellFencePlanSchema.safeParse(
       await context.req.json().catch(() => null)
     )
@@ -1209,9 +1161,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminCellFenceOperationSchema.safeParse(
       await context.req.json().catch(() => null)
@@ -1236,9 +1185,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminCellFenceAttemptStatusSchema.safeParse(
       await context.req.json().catch(() => null)
     )
@@ -1255,9 +1201,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminCellFenceAttemptAbortSchema.safeParse(
       await context.req.json().catch(() => null)
@@ -1276,9 +1219,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminDrainAttemptPrepareSchema.safeParse(
       await context.req.json().catch(() => null)
@@ -1303,9 +1243,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminDrainAttemptMutationSchema.safeParse(
       await context.req.json().catch(() => null)
     )
@@ -1322,9 +1259,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminDrainAttemptReceiptSchema.safeParse(
       await context.req.json().catch(() => null)
@@ -1345,9 +1279,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminDrainAttemptRecoverSchema.safeParse(
       await context.req.json().catch(() => null)
     )
@@ -1364,9 +1295,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminCellConfigSchema.safeParse(await context.req.json().catch(() => null))
     if (!body.success) return context.json({ error: 'invalid_request' }, 400)
@@ -1392,9 +1320,6 @@ export function createRelayApp(
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
     }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
-    }
     const body = AdminCellEvacuateSchema.safeParse(await context.req.json().catch(() => null))
     if (!body.success) return context.json({ error: 'invalid_request' }, 400)
     try {
@@ -1413,9 +1338,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminCellEvacuationCapacitySchema.safeParse(
       await context.req.json().catch(() => null)
@@ -1436,9 +1358,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminCellEvacuationStatusSchema.safeParse(
       await context.req.json().catch(() => null)
@@ -1464,9 +1383,6 @@ export function createRelayApp(
     if (config.role !== 'director') return context.json({ error: 'director_only' }, 404)
     if (!bearer || !(await verifyAdminToken(bearer))) {
       return context.json({ error: 'invalid_token' }, 401)
-    }
-    if (requestTooLarge(context.req.header('content-length'))) {
-      return context.json({ error: 'request_too_large' }, 413)
     }
     const body = AdminCellStatusSchema.safeParse(await context.req.json().catch(() => null))
     if (!body.success) return context.json({ error: 'invalid_request' }, 400)
@@ -2119,6 +2035,3 @@ function isCanonicalRelayOrigin(value: string): boolean {
   )
 }
 
-function requestTooLarge(contentLength: string | undefined): boolean {
-  return Number(contentLength ?? 0) > RELAY_PROTOCOL_LIMITS.maxHttpBodyBytes
-}

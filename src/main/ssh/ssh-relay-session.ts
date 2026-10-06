@@ -2452,6 +2452,8 @@ export class SshRelaySession {
   private retireExitedPty(payload: SshPtyExitPayload, deliveryHandled = false): void {
     const relayPtyId = toRelaySshPtyId(this.targetId, payload.id)
     this.retiredSourceDeliveries.activate(relayPtyId)
+    // Why: every output frame refreshes this entry; an exited PTY must not keep it forever.
+    this.sourceIdentityByRelayPtyId.delete(relayPtyId)
     clearProviderPtyState(payload.id)
     deletePtyOwnership(payload.id)
     this.rejectedPtyRecoveryAttempts.delete(payload.id)

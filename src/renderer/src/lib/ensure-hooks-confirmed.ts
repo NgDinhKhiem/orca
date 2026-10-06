@@ -2,6 +2,7 @@ import type { AppState } from '@/store/types'
 import type { OrcaHooks } from '../../../shared/orca-yaml-hook-types'
 import { resolveHookCommandSourcePolicy } from '../../../shared/hook-command-source-policy'
 import { hashOrcaHookScript, type OrcaHookScriptKind } from './orca-hook-trust'
+import { getOrcaSetupTrustContent, type OrcaSetupTrustGrant } from '../../../shared/orca-hook-trust'
 import {
   checkRuntimeHooks,
   readRuntimeIssueCommand,
@@ -30,20 +31,6 @@ function enqueueTrustPrompt<T>(task: () => Promise<T>): Promise<T> {
 
 export function __resetTrustPromptChainForTests(): void {
   trustPromptChain = Promise.resolve()
-}
-
-function getSetupTrustContent(yamlHooks: OrcaHooks | null): string {
-  const defaultTabCommands = (yamlHooks?.defaultTabs ?? [])
-    .map((tab, index) => {
-      const command = tab.command?.trim()
-      if (!command) {
-        return null
-      }
-      const label = tab.title ? ` ${tab.title}` : ''
-      return `# defaultTabs[${index + 1}]${label}\n${command}`
-    })
-    .filter((entry): entry is string => entry !== null)
-  return [yamlHooks?.scripts?.setup?.trim(), ...defaultTabCommands].filter(Boolean).join('\n\n')
 }
 
 function getVmRecipeTrustContent(yamlHooks: OrcaHooks | null): string {
@@ -98,6 +85,19 @@ function settingsForHookRepoOwner(
 function canUseRepoWideTrust(state: AppState, repoId: string): boolean {
   const hasDuplicateRepoId = state.repos.filter((repo) => repo.id === repoId).length > 1
   return Boolean(state.trustedOrcaHooks[repoId]?.all) && !hasDuplicateRepoId
+}
+
+/** Setup trust this client holds, sent on create so the host can gate worktree setup on it. */
+export function getOrcaSetupTrustGrant(
+  state: AppState,
+  repoId: string
+): OrcaSetupTrustGrant | undefined {
+  const contentHash = state.trustedOrcaHooks[repoId]?.setup?.contentHash
+  const repoWide = canUseRepoWideTrust(state, repoId)
+  if (!contentHash && !repoWide) {
+    return undefined
+  }
+  return { ...(contentHash ? { contentHash } : {}), ...(repoWide ? { repoWide: true } : {}) }
 }
 
 async function confirmScriptContent(
@@ -295,7 +295,7 @@ export async function ensureHooksConfirmed(
         const yamlHooks = (result.hooks as OrcaHooks | null) ?? null
         scriptContent =
           scriptKind === 'setup'
-            ? getSetupTrustContent(yamlHooks)
+            ? getOrcaSetupTrustContent(yamlHooks)
             : scriptKind === 'vmRecipe'
               ? getVmRecipeTrustContent(yamlHooks)
               : (yamlHooks?.scripts?.[scriptKind] ?? '').trim()
@@ -307,4 +307,17 @@ export async function ensureHooksConfirmed(
 
     return confirmScriptContent(state, repoId, scriptKind, scriptContent, hostId, isCancelled)
   })
+}
+
+/** Prompts for setup content read from a newly created worktree, which can differ from the
+ *  primary checkout the pre-create prompt inspected. */
+export function confirmWorktreeSetupContent(
+  getState: () => AppState,
+  repoId: string,
+  scriptContent: string,
+  hostId?: ExecutionHostId
+): Promise<'run' | 'skip'> {
+  return enqueueTrustPrompt(() =>
+    confirmScriptContent(getState(), repoId, 'setup', scriptContent, hostId)
+  )
 }

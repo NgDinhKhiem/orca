@@ -13,7 +13,10 @@ vi.mock('../persistence', () => ({
 
 import { OrchestrationDb } from '../runtime/orchestration/db'
 import { OrcaRuntimeService } from '../runtime/orca-runtime'
-import type { HostCliPassthroughOptions } from './ssh-remote-cli-host-passthrough'
+import type {
+  HostCliPassthroughOptions,
+  SshCliRuntimeAuthority
+} from './ssh-remote-cli-host-passthrough'
 import { runRemoteOrcaCli } from './ssh-remote-orca-cli'
 import { createRootDispatch } from '../runtime/orchestration/db/root-dispatch-test-fixture'
 
@@ -24,6 +27,12 @@ const LEGACY_FALLBACK_OPTIONS: HostCliPassthroughOptions = {
   cliEntryPath: '/host/app/out/cli/index.js',
   userDataPath: '/host/user-data',
   entryExists: () => false
+}
+const SSH_AUTHORITY: SshCliRuntimeAuthority = {
+  kind: 'ssh',
+  targetId: 'box-1',
+  connectionIncarnation: 'incarnation-1',
+  attachmentId: 'attachment-1'
 }
 type FakeChild = EventEmitter & {
   stdout: EventEmitter
@@ -168,12 +177,13 @@ describe('runRemoteOrcaCli', () => {
 
       const result = await runRemoteOrcaCli(
         runtime,
-        { argv, cwd: '/home/alice/repo', env: {} },
+        { argv, cwd: '/home/alice/repo', env: {}, runtimeAuthority: SSH_AUTHORITY },
         LEGACY_FALLBACK_OPTIONS
       )
 
       expect(result.exitCode).toBe(0)
-      expect(listTerminals).toHaveBeenCalledWith(undefined, undefined, {
+      // Why MAX_SAFE_INTEGER: the caller's --limit is applied after scoping to its SSH host.
+      expect(listTerminals).toHaveBeenCalledWith(undefined, Number.MAX_SAFE_INTEGER, {
         handles: undefined,
         requireFreshPtyLiveness: undefined,
         includeVisualLayouts
@@ -615,7 +625,9 @@ describe('runRemoteOrcaCli', () => {
     expect(db.getActiveDispatchForIdentity).toHaveBeenCalledWith('term_legacy_worker', undefined)
   })
 
-  it('routes previously-unsupported commands through the full host CLI', async () => {
+  // Why skills get: worktree create used to be bridged here, which let an SSH host create local
+  // worktrees; only allowlisted commands reach the host CLI now.
+  it('routes allowlisted commands outside the legacy switch through the full host CLI', async () => {
     const { runtime } = createRuntime()
     const child = createFakeChild()
     const spawn = vi.fn(() => child)
@@ -623,7 +635,7 @@ describe('runRemoteOrcaCli', () => {
     const resultPromise = runRemoteOrcaCli(
       runtime,
       {
-        argv: ['worktree', 'create', '--repo', 'orca', '--branch', 'fix/x', '--json'],
+        argv: ['skills', 'get', 'orchestration', '--reference', 'worker-contract', '--json'],
         cwd: '/home/alice/repo',
         env: { ORCA_TERMINAL_HANDLE: 'term_ssh' }
       },
@@ -645,12 +657,10 @@ describe('runRemoteOrcaCli', () => {
     const [, args] = spawn.mock.calls[0] as unknown as [string, string[]]
     expect(args).toEqual([
       '/host/app/out/cli/index.js',
-      'worktree',
-      'create',
-      '--repo',
-      'orca',
-      '--branch',
-      'fix/x',
+      'skills',
+      'get',
+      'orchestration',
+      '--reference=worker-contract',
       '--json'
     ])
   })
@@ -671,7 +681,8 @@ describe('runRemoteOrcaCli', () => {
     expect(spawn).not.toHaveBeenCalled()
   })
 
-  it('rejects interactive account add but still bridges account list', async () => {
+  // Why: account list used to be bridged; it reveals the client's agent accounts to the SSH host.
+  it('rejects interactive account add and refuses account list over SSH', async () => {
     const { runtime } = createRuntime()
     const spawn = vi.fn(() => createFakeChild())
 
@@ -685,9 +696,7 @@ describe('runRemoteOrcaCli', () => {
     expect(addResult.stderr).toContain('interactive agent login')
     expect(spawn).not.toHaveBeenCalled()
 
-    const child = createFakeChild()
-    spawn.mockReturnValueOnce(child)
-    const listPromise = runRemoteOrcaCli(
+    const listResult = await runRemoteOrcaCli(
       runtime,
       { argv: ['account', 'list'], cwd: '/home/alice', env: {} },
       {
@@ -696,16 +705,10 @@ describe('runRemoteOrcaCli', () => {
         spawn: spawn as never
       }
     )
-    await Promise.resolve()
-    child.stdout.emit('data', Buffer.from('Managed Claude accounts\n'))
-    child.emit('close', 0)
 
-    await expect(listPromise).resolves.toEqual({
-      stdout: 'Managed Claude accounts\n',
-      stderr: '',
-      exitCode: 0
-    })
-    expect(spawn).toHaveBeenCalledOnce()
+    expect(listResult.exitCode).toBe(1)
+    expect(listResult.stderr).toContain('not available from an SSH host')
+    expect(spawn).not.toHaveBeenCalled()
   })
 
   it('bridges account add help because it does not start an interactive login', async () => {
@@ -757,12 +760,16 @@ describe('runRemoteOrcaCli', () => {
 
     const result = await runRemoteOrcaCli(
       runtime,
-      { argv: ['worktree', 'list'], cwd: '/home/alice', env: {} },
+      {
+        argv: ['orchestration', 'request-show', '--request', 'req_1'],
+        cwd: '/home/alice',
+        env: {}
+      },
       LEGACY_FALLBACK_OPTIONS
     )
 
     expect(result.exitCode).toBe(1)
-    expect(result.stderr).toContain('Unsupported SSH Orca CLI command: worktree list')
+    expect(result.stderr).toContain('Unsupported SSH Orca CLI command: orchestration request-show')
     expect(result.stderr).toContain('full Orca CLI bridge unavailable')
   })
 
@@ -781,7 +788,7 @@ describe('runRemoteOrcaCli', () => {
 
     expect(result.exitCode).toBe(1)
     expect(result.stderr).toContain(
-      'Unsupported SSH Orca CLI command: emulator launch com.acme.app'
+      'orca emulator launch com.acme.app is not available from an SSH host'
     )
     expect(result.stderr).not.toContain('com.acme.app .MainActivity')
   })

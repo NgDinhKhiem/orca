@@ -39,6 +39,7 @@ vi.mock('electron', () => ({
 vi.mock('node:fs/promises', () => ({
   constants: { COPYFILE_EXCL: 1 },
   copyFile: vi.fn(),
+  realpath: async (pathValue: string) => pathValue,
   stat: statMock
 }))
 
@@ -58,6 +59,7 @@ vi.mock('../win32-utils', () => ({
 import { EXTERNAL_EDITOR_CLI_COMMAND, registerShellHandlers } from './shell'
 import { resolveExternalEditorLaunchSpec } from '../external-editor-launch'
 import type { SshTarget } from '../../shared/ssh-types'
+import type { OpenInApplication } from '../../shared/ui-chrome-types'
 
 function createSpawnedProcess(result: 'spawn' | 'error' = 'spawn'): {
   once: ReturnType<typeof vi.fn>
@@ -93,7 +95,21 @@ function createSshTarget(overrides: Partial<SshTarget> = {}): SshTarget {
 }
 
 describe('registerShellHandlers', () => {
-  const settings = { activeRuntimeEnvironmentId: null as string | null }
+  const settings: {
+    activeRuntimeEnvironmentId: string | null
+    openInApplications: OpenInApplication[]
+  } = {
+    activeRuntimeEnvironmentId: null,
+    openInApplications: []
+  }
+
+  function configureOpenInCommands(...commands: string[]): void {
+    settings.openInApplications = commands.map((command, index) => ({
+      id: `app-${index}`,
+      label: command,
+      command
+    }))
+  }
   const sshTargets = new Map<string, SshTarget>()
   const store = {
     getSettings: () => settings,
@@ -110,6 +126,7 @@ describe('registerShellHandlers', () => {
     spawnMock.mockReset()
     statMock.mockReset()
     settings.activeRuntimeEnvironmentId = null
+    settings.openInApplications = []
     sshTargets.clear()
     openPathMock.mockResolvedValue('')
     resolveCliCommandMock.mockReturnValue('editor-cli')
@@ -342,6 +359,7 @@ describe('registerShellHandlers', () => {
     })
 
     it('uses a provided launcher command', async () => {
+      configureOpenInCommands('custom-editor')
       resolveCliCommandMock.mockReturnValueOnce('custom-editor')
       const workspacePath = resolve('workspace')
       const handler = getHandler('shell:openInExternalEditor')
@@ -390,6 +408,7 @@ describe('registerShellHandlers', () => {
       const workspacePath = resolve('workspace')
       const handler = getHandler('shell:openInExternalEditor')
       const nvimPath = 'C:\\Program Files\\Neovim\\bin\\nvim.exe'
+      configureOpenInCommands(nvimPath)
 
       try {
         await expect(handler({}, { path: workspacePath, command: nvimPath })).resolves.toEqual({
@@ -416,6 +435,7 @@ describe('registerShellHandlers', () => {
     })
 
     it('detaches JetBrains batch shims on Windows but leaves other launchers waiting', async () => {
+      configureOpenInCommands('idea')
       const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
       Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
       const workspacePath = normalize(resolve('workspace'))
@@ -514,6 +534,7 @@ describe('registerShellHandlers', () => {
     })
 
     it('runs compound shell commands through the platform shell', async () => {
+      configureOpenInCommands('open -a "Typora"')
       const filePath = normalize(resolve('note.md'))
       const handler = getHandler('shell:openInExternalEditor')
       const launchSpec = resolveExternalEditorLaunchSpec('open -a "Typora"', filePath)
@@ -529,6 +550,36 @@ describe('registerShellHandlers', () => {
         stdio: 'ignore',
         windowsHide: true
       })
+    })
+
+    it('refuses renderer commands that are not configured editors', async () => {
+      configureOpenInCommands('code')
+      const workspacePath = resolve('workspace')
+      const handler = getHandler('shell:openInExternalEditor')
+
+      await expect(
+        handler({}, { path: workspacePath, command: 'calc.exe & whoami' })
+      ).resolves.toEqual({ ok: false, reason: 'launch-failed' })
+      await expect(handler({}, { path: workspacePath, command: '/tmp/payload' })).resolves.toEqual({
+        ok: false,
+        reason: 'launch-failed'
+      })
+      await expect(
+        handler({}, { path: '/srv/project', command: 'touch /tmp/pwned', connectionId: 'ssh-1' })
+      ).resolves.toEqual({ ok: false, reason: 'launch-failed' })
+      expect(spawnMock).not.toHaveBeenCalled()
+    })
+
+    it('accepts configured commands regardless of surrounding whitespace', async () => {
+      configureOpenInCommands('subl')
+      resolveCliCommandMock.mockReturnValueOnce('subl')
+      const workspacePath = resolve('workspace')
+      const handler = getHandler('shell:openInExternalEditor')
+
+      await expect(handler({}, { path: workspacePath, command: '  subl ' })).resolves.toEqual({
+        ok: true
+      })
+      expect(resolveCliCommandMock).toHaveBeenCalledWith('subl', { platform: process.platform })
     })
 
     it('rejects local and SSH launches while a remote runtime is active', async () => {
@@ -673,6 +724,7 @@ describe('registerShellHandlers', () => {
     it.each(['cursor', 'zed', 'code --reuse-window'])(
       'rejects the unsupported SSH launcher %s',
       async (command) => {
+        configureOpenInCommands(command)
         sshTargets.set('ssh-1', createSshTarget())
         const handler = getHandler('shell:openInExternalEditor')
 
@@ -752,6 +804,42 @@ describe('registerShellHandlers', () => {
 
       await expect(handler({}, 'file://server/share/file.md')).resolves.toBeUndefined()
       expect(openPathMock).not.toHaveBeenCalled()
+    })
+
+    it('reveals launchable file paths instead of running them', async () => {
+      statMock.mockResolvedValue({ isDirectory: () => false, mode: 0o100644 })
+      const filePath = resolve('payload.jar')
+      const handler = getHandler('shell:openFilePath')
+
+      await expect(handler({}, filePath)).resolves.toBe(true)
+      expect(openPathMock).not.toHaveBeenCalled()
+      expect(showItemInFolderMock).toHaveBeenCalledWith(normalize(filePath))
+    })
+
+    it('reveals launchable file URIs instead of running them', async () => {
+      statMock.mockResolvedValue({ isDirectory: () => false, mode: 0o100644 })
+      const filePath = resolve('payload.jar')
+      const handler = getHandler('shell:openFileUri')
+
+      await expect(handler({}, pathToFileURL(filePath).toString())).resolves.toBeUndefined()
+      expect(openPathMock).not.toHaveBeenCalled()
+      expect(showItemInFolderMock).toHaveBeenCalledWith(normalize(filePath))
+    })
+
+    it('still opens documents with the system default app', async () => {
+      statMock.mockResolvedValue({ isDirectory: () => false, mode: 0o100644 })
+      const filePath = resolve('note.md')
+      const handler = getHandler('shell:openFilePath')
+
+      await expect(handler({}, filePath)).resolves.toBe(true)
+      expect(openPathMock).toHaveBeenCalledWith(normalize(filePath))
+      expect(showItemInFolderMock).not.toHaveBeenCalled()
+    })
+
+    it('does not expose an arbitrary-path copy channel', () => {
+      registerShellHandlers(store as never)
+      const channels = handleMock.mock.calls.map((call: unknown[]) => call[0])
+      expect(channels).not.toContain('shell:copyFile')
     })
 
     it('swallows host launcher failures for file URIs', async () => {

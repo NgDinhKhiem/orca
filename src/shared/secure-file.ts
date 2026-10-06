@@ -142,7 +142,14 @@ export function writeSecureFile(
       fsyncFileSync(tmpFile)
     }
     // Why: writeFileSync mode is a no-op on Windows, so restrict the credential's ACL synchronously before the rename publishes it under inherited ACLs.
-    const stagedOutcome = applySecurePathRestriction(tmpFile, false, process.platform, true)
+    const stagedOutcome = applySecurePathRestriction(
+      tmpFile,
+      false,
+      process.platform,
+      true,
+      undefined,
+      { freshlyCreated: true }
+    )
     renameSync(tmpFile, targetPath)
     // Why: these hold auth credentials, so the published path must stay current-user only; cache only on confirmed success so failures retry.
     // The staged file's protected DACL survives the rename, so this pass usually just verifies it.
@@ -258,14 +265,15 @@ function applySecurePathRestriction(
   isDirectory: boolean,
   platform: NodeJS.Platform,
   sync: boolean,
-  onAsyncSettled?: (restricted: boolean) => void
+  onAsyncSettled?: (restricted: boolean) => void,
+  windowsSyncOptions: { freshlyCreated?: boolean } = {}
 ): HardeningOutcome {
   if (platform === 'win32') {
     if (sync) {
       // Why no retry floor here: the write path is user-driven, not polled, and a failed apply
       // must still be retried on the next write of the same credential.
       // Why: apply the ACL synchronously so the credential file isn't briefly readable under inherited ACLs (writeFileSync mode is a no-op on Windows).
-      const restricted = restrictWindowsPathSync(targetPath, isDirectory)
+      const restricted = restrictWindowsPathSync(targetPath, isDirectory, windowsSyncOptions)
       if (restricted) {
         // Success only: this is how a recovered host clears the read path's backoff (and reports
         // `recovered`). Recording a failure here would put the exempt lane back under the budget.

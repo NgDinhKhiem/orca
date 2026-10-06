@@ -152,7 +152,7 @@ function applyFault(workflow) {
 }
 
 function checkoutRef(job) {
-  return job.steps?.find((step) => step.uses === 'actions/checkout@v6')?.with?.ref
+  return job.steps?.find((step) => step.uses?.startsWith('actions/checkout@'))?.with?.ref
 }
 
 function discoverDispatchedWorkflowPaths(workflow) {
@@ -186,7 +186,7 @@ function discoverStandaloneReusablePaths(workflow) {
 
 function releaseTagExecutionJobs(workflow) {
   return Object.entries(workflow.jobs).filter(([, job]) => {
-    const checkoutIndex = job.steps?.findIndex((step) => step.uses === 'actions/checkout@v6') ?? -1
+    const checkoutIndex = job.steps?.findIndex((step) => step.uses?.startsWith('actions/checkout@')) ?? -1
     return (
       checkoutRef(job) === 'refs/tags/${{ needs.cut.outputs.tag }}' &&
       job.steps.slice(checkoutIndex + 1).some((step) => step.run || step.uses?.startsWith('./'))

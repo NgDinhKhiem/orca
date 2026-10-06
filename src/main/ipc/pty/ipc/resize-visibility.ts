@@ -16,10 +16,12 @@ import {
   activeRendererPtys,
   invalidatePendingPtyDrainPolicy,
   invalidatePendingPtyDrainPriority,
+  isRendererPtyRecentlyExited,
   ptySizes,
   rendererVisibilityKnownPtys,
   visibleRendererPtys
 } from '../delivery/visibility-state'
+import { ptyOwnership } from '../provider/ownership-state'
 import {
   mainDeliveryBreadcrumbs,
   resetRendererDeliveryAccountingForLifecycleReset
@@ -29,6 +31,11 @@ import { applyCumulativeAck } from '../delivery/accounting'
 import { sendModelRestoreNeededMarker } from '../delivery/payload'
 import { isMainWindowPtyIpcEvent } from './write-input'
 import type { PtyIpcSession } from '../session'
+
+/** A report that raced its PTY's exit; a respawn under the same id owns it again and is accepted. */
+function isLateReportForExitedPty(id: string): boolean {
+  return isRendererPtyRecentlyExited(id) && !ptyOwnership.has(id)
+}
 
 export function installPtyResizeVisibilityIpc(session: PtyIpcSession): void {
   const ipcMain = getPtyIpc()
@@ -195,7 +202,7 @@ export function installPtyResizeVisibilityIpc(session: PtyIpcSession): void {
 
   ipcMain.removeAllListeners('pty:setActiveRendererPty')
   ipcMain.on('pty:setActiveRendererPty', (_event, args: { id: string; active: boolean }) => {
-    if (typeof args.id !== 'string' || !args.id) {
+    if (typeof args.id !== 'string' || !args.id || isLateReportForExitedPty(args.id)) {
       return
     }
     // Why: renderer scheduling hint only — active panes just get first chance at the bounded output reserve; reads/state/notifications continue for inactive terminals.
@@ -212,7 +219,7 @@ export function installPtyResizeVisibilityIpc(session: PtyIpcSession): void {
 
   ipcMain.removeAllListeners('pty:setRendererPtyVisible')
   ipcMain.on('pty:setRendererPtyVisible', (_event, args: { id: string; visible: boolean }) => {
-    if (typeof args.id !== 'string' || !args.id) {
+    if (typeof args.id !== 'string' || !args.id || isLateReportForExitedPty(args.id)) {
       return
     }
     // Why: data produced while no renderer can see this PTY must keep that origin through batching, even if the user switches back before the flush lands.

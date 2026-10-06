@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   windows: [] as MockBrowserWindow[],
@@ -359,5 +359,57 @@ describe('OffscreenBrowserBackend lifecycle', () => {
     await backend.createTab({ browserPageId: 'page-1', url: 'about:blank', worktreeId: 'wt' })
     await expect(backend.closeTab('page-1')).resolves.toBeUndefined()
     expect(browserManager.unregisterGuest).toHaveBeenCalledWith('page-1')
+  })
+})
+
+describe('OffscreenBrowserBackend URL normalization', () => {
+  let loadURL: MockInstance<MockWebContents['loadURL']>
+
+  beforeEach(() => {
+    loadURL = vi.spyOn(MockWebContents.prototype, 'loadURL')
+    mocks.windows.length = 0
+    mocks.finishLoads = true
+    mocks.BrowserWindow.mockImplementation(function BrowserWindowMock(this: {
+      webContents: MockWebContents
+      isDestroyed: () => boolean
+      destroy: () => void
+    }) {
+      const window = new MockBrowserWindow()
+      this.webContents = window.webContents
+      this.isDestroyed = window.isDestroyed.bind(window)
+      this.destroy = window.destroy.bind(window)
+    })
+  })
+
+  afterEach(() => {
+    loadURL.mockRestore()
+  })
+
+  function createBackend(): OffscreenBrowserBackend {
+    const browserManager = {
+      registerOffscreenGuest: vi.fn(registerOffscreenGuestLikeBrowserManager),
+      unregisterGuest: vi.fn()
+    }
+    return new OffscreenBrowserBackend(browserManager as never)
+  }
+
+  it.each(['javascript:alert(document.cookie)', 'data:text/html,<script>alert(1)</script>'])(
+    'refuses %s before creating a window',
+    async (url) => {
+      await expect(
+        createBackend().createTab({ browserPageId: 'page-1', url, worktreeId: 'wt' })
+      ).rejects.toMatchObject({ code: 'invalid_argument' })
+      expect(mocks.windows).toHaveLength(0)
+      expect(loadURL).not.toHaveBeenCalled()
+    }
+  )
+
+  it('loads the same normalized URL that goto would', async () => {
+    await createBackend().createTab({
+      browserPageId: 'page-1',
+      url: '  localhost:3000/app ',
+      worktreeId: 'wt'
+    })
+    expect(loadURL).toHaveBeenCalledWith('http://localhost:3000/app')
   })
 })

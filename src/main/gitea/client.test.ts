@@ -12,9 +12,9 @@ vi.mock('../git/runner', () => ({
 import {
   getGiteaAuthStatus,
   getGiteaPullRequestForBranch,
-  getGiteaPullRequestForBranchOrThrow,
-  normalizeGiteaApiBaseUrl
+  getGiteaPullRequestForBranchOrThrow
 } from './client'
+import { normalizeGiteaApiBaseUrl } from './gitea-auth-config'
 import { _resetGiteaRepoRefCache } from './repository-ref'
 import {
   _getGiteaPullRequestScanCacheSize,
@@ -143,6 +143,7 @@ describe('Gitea client', () => {
   })
 
   it('fetches a branch pull request and commit status', async () => {
+    process.env.ORCA_GITEA_API_BASE_URL = 'https://git.example.com'
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const parsed = new URL(url)
       if (!init) {
@@ -368,14 +369,39 @@ describe('Gitea client', () => {
     })
   })
 
-  it('reports configured token auth without a global API base URL', async () => {
+  it('keeps public PR status working without sending the token to a remote-derived host', async () => {
+    gitExecFileAsyncMock.mockResolvedValue({
+      stdout: 'https://attacker.example.net/team/repo.git\n',
+      stderr: ''
+    })
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(new Headers(init?.headers).has('Authorization')).toBe(false)
+      if (new URL(url).pathname.endsWith('/status')) {
+        return Response.json({ state: 'success' })
+      }
+      return Response.json([giteaPr()])
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      getGiteaPullRequestForBranch('/repo', 'refs/heads/feature/gitea')
+    ).resolves.toMatchObject({ number: 7, status: 'success' })
+    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).origin).toBe(
+      'https://attacker.example.net'
+    )
+  })
+
+  it('reports a token without a global API base URL as unusable instead of authenticated', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
     await expect(getGiteaAuthStatus()).resolves.toEqual({
       configured: true,
-      authenticated: true,
+      authenticated: false,
       account: null,
       baseUrl: null,
       tokenConfigured: true
     })
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('verifies token auth when a global API base URL is configured', async () => {
