@@ -3,6 +3,13 @@ import type { Repo } from '../../shared/repo-types'
 import { getEffectiveHooks, loadHooks, runHook } from '../hooks'
 import { createSetupRunnerScript, resolveSetupRunnerShell } from '../worktree-runner-script'
 import { getDefaultTabsLaunch, shouldRunSetupForCreate } from '../effective-hook-config'
+import {
+  isExplicitCliSetupRun,
+  readTrustedOrcaHooks,
+  resolveWorktreeSetupContentTrust,
+  withholdUntrustedWorktreeSetup,
+  type TrustedOrcaHooksSource
+} from '../worktree-setup-content-trust'
 import type { RuntimeManagedWorktreeCreateArgs } from './runtime-managed-worktree-create-types'
 import type { RuntimeStore } from './runtime-store-contract'
 
@@ -13,10 +20,12 @@ export async function prepareRuntimeLocalWorktreeSetup(args: {
   settings: ReturnType<RuntimeStore['getSettings']>
   runtimeTarget: { wslDistro?: string } | undefined
   shouldUseSetupRunner: boolean
+  trustStore: TrustedOrcaHooksSource | undefined
   warning?: string
 }): Promise<{
   setup?: CreateWorktreeResult['setup']
   defaultTabs?: CreateWorktreeResult['defaultTabs']
+  setupApproval?: CreateWorktreeResult['setupApproval']
   warning?: string
   effectiveDecision: 'run' | 'skip' | 'inherit'
   hookFound: boolean
@@ -29,6 +38,14 @@ export async function prepareRuntimeLocalWorktreeSetup(args: {
   const yamlHooks = loadHooks(worktreePath)
   const hooks = getEffectiveHooks(repo, worktreePath)
   const effectiveDecision = request.runHooks ? 'run' : (request.setupDecision ?? 'inherit')
+  // Why: trust is checked against the worktree's own orca.yaml, the content that would run.
+  const trust = resolveWorktreeSetupContentTrust({
+    repo,
+    worktreeHooks: yamlHooks,
+    trustedOrcaHooks: readTrustedOrcaHooks(args.trustStore),
+    grant: request.setupTrust,
+    explicitCliRun: isExplicitCliSetupRun(effectiveDecision, request.cliProvenance)
+  })
   let defaultTabs: CreateWorktreeResult['defaultTabs']
   try {
     defaultTabs = getDefaultTabsLaunch(yamlHooks, repo, effectiveDecision)
@@ -38,11 +55,11 @@ export async function prepareRuntimeLocalWorktreeSetup(args: {
       ? { tabs: yamlHooks.defaultTabs, runCommands: false }
       : undefined
   }
-  const shouldRunSetup = Boolean(
+  const policyRunsSetup = Boolean(
     hooks?.scripts.setup && shouldRunSetupForCreate(repo, effectiveDecision)
   )
   let didStartInProcessSetupHook = false
-  if (shouldRunSetup && hooks?.scripts.setup) {
+  if (policyRunsSetup && hooks?.scripts.setup) {
     if (args.shouldUseSetupRunner) {
       try {
         setup = createSetupRunnerScript(
@@ -56,7 +73,7 @@ export async function prepareRuntimeLocalWorktreeSetup(args: {
       } catch (error) {
         console.error(`[hooks] Failed to prepare setup runner for ${worktreePath}:`, error)
       }
-    } else {
+    } else if (trust.trusted) {
       didStartInProcessSetupHook = true
       void runHook('setup', worktreePath, repo, worktreePath, args.runtimeTarget).then((result) => {
         if (!result.success) {
@@ -69,13 +86,25 @@ export async function prepareRuntimeLocalWorktreeSetup(args: {
     warning = warning ? `${warning} Also ${skipped}` : skipped
     console.warn(`[hooks] ${skipped}`)
   }
+  const gated = withholdUntrustedWorktreeSetup(trust, { setup, defaultTabs })
+  // Why: an in-process hook has no runner to hand back, so its approval carries content only.
+  const setupApproval =
+    gated.setupApproval ??
+    (policyRunsSetup && !args.shouldUseSetupRunner && !trust.trusted
+      ? {
+          scriptContent: trust.scriptContent,
+          contentHash: trust.contentHash,
+          runDefaultTabCommands: false
+        }
+      : undefined)
   return {
-    ...(setup ? { setup } : {}),
-    ...(defaultTabs ? { defaultTabs } : {}),
+    ...(gated.setup ? { setup: gated.setup } : {}),
+    ...(gated.defaultTabs ? { defaultTabs: gated.defaultTabs } : {}),
+    ...(setupApproval ? { setupApproval } : {}),
     ...(warning ? { warning } : {}),
     effectiveDecision,
     hookFound: Boolean(hooks?.scripts.setup),
-    shouldRunSetup,
+    shouldRunSetup: policyRunsSetup && trust.trusted,
     didStartInProcessSetupHook
   }
 }

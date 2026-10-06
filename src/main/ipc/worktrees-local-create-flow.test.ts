@@ -21,6 +21,7 @@ import {
   gitExecFileAsyncMock
 } from './worktrees-test-module-mocks'
 import { handlers, mainWindow, setupWorktreeHandlers, store } from './worktrees-test-harness'
+import { trustOrcaYamlSetup } from './worktrees-test-orca-hook-trust'
 import type { WorktreeRuntimeStub } from './worktrees-test-runtime-stub'
 
 vi.mock('electron', async () =>
@@ -637,6 +638,7 @@ describe('registerWorktreeHandlers', () => {
       scripts: { setup: 'pnpm install' },
       setupAgentStartupPolicy: 'wait-for-setup'
     })
+    trustOrcaYamlSetup('repo-1', 'pnpm install')
     getEffectiveHooksMock.mockReturnValue({ scripts: { setup: 'pnpm install' } })
     getEffectiveHooksFromConfigMock.mockReturnValue({ scripts: { setup: 'pnpm install' } })
     shouldRunSetupForCreateMock.mockReturnValue(true)
@@ -750,6 +752,7 @@ describe('registerWorktreeHandlers', () => {
       }
     ])
     loadHooksMock.mockReturnValue({ scripts: { setup: 'pnpm install' } })
+    trustOrcaYamlSetup('repo-1', 'pnpm install')
     getEffectiveHooksMock.mockReturnValue({ scripts: { setup: 'pnpm install' } })
     getEffectiveHooksFromConfigMock.mockReturnValue({ scripts: { setup: 'pnpm install' } })
     shouldRunSetupForCreateMock.mockReturnValue(true)
@@ -809,6 +812,7 @@ describe('registerWorktreeHandlers', () => {
       setupScriptLaunchMode: 'split-vertical'
     })
     loadHooksMock.mockReturnValue({ scripts: { setup: 'pnpm install' } })
+    trustOrcaYamlSetup('repo-1', 'pnpm install')
     getEffectiveHooksMock.mockReturnValue({ scripts: { setup: 'pnpm install' } })
     getEffectiveHooksFromConfigMock.mockReturnValue({ scripts: { setup: 'pnpm install' } })
     shouldRunSetupForCreateMock.mockReturnValue(true)

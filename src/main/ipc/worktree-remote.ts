@@ -59,6 +59,7 @@ import type {
   RemoteTrackingBase
 } from '../runtime/orca-runtime'
 import { getProjectHostSetupWorktreeMeta } from '../../shared/project-host-setup-lookup'
+import type { OrcaHooks } from '../../shared/orca-yaml-hook-types'
 import { getEffectiveHooks, loadHooks, parseOrcaYaml } from '../hooks'
 import { buildPosixRunnerScript, buildWindowsRunnerScript } from '../setup-runner-script-text'
 import { createSetupRunnerScript, resolveSetupRunnerShell } from '../worktree-runner-script'
@@ -68,6 +69,13 @@ import {
   getEffectiveHooksFromConfig,
   shouldRunSetupForCreate
 } from '../effective-hook-config'
+import {
+  isExplicitCliSetupRun,
+  readTrustedOrcaHooks,
+  resolveWorktreeSetupContentTrust,
+  withholdUntrustedWorktreeSetup,
+  type GatedWorktreeSetupLaunch
+} from '../worktree-setup-content-trust'
 import { requireSshGitProvider } from '../providers/ssh-git-dispatch'
 import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import type { SshGitProvider } from '../providers/ssh-git-provider'
@@ -1454,6 +1462,23 @@ export async function cleanupUnusedWorktreePushTargetRemoteSsh(
   )
 }
 
+function gateCreatedWorktreeSetup(
+  args: CreateWorktreeArgsWithSystemProvenance,
+  repo: Repo,
+  store: Store,
+  worktreeHooks: OrcaHooks | null,
+  launch: Pick<CreateWorktreeResult, 'setup' | 'defaultTabs'>
+): GatedWorktreeSetupLaunch {
+  const trust = resolveWorktreeSetupContentTrust({
+    repo,
+    worktreeHooks,
+    trustedOrcaHooks: readTrustedOrcaHooks(store),
+    grant: args.setupTrust,
+    explicitCliRun: isExplicitCliSetupRun(args.setupDecision, args.cliProvenance)
+  })
+  return withholdUntrustedWorktreeSetup(trust, launch)
+}
+
 async function readRemoteEffectiveHooks(
   repo: Repo,
   fsProvider: IFilesystemProvider,
@@ -2139,6 +2164,7 @@ export async function createRemoteWorktree(
 
   let setup: CreateWorktreeResult['setup']
   let defaultTabs: CreateWorktreeResult['defaultTabs']
+  let gatedSetup: GatedWorktreeSetupLaunch = {}
   if (fsProvider) {
     await timing.time('prepare_setup', async () => {
       const yamlHooks = await readRemoteOrcaYaml(fsProvider, created.path)
@@ -2176,6 +2202,9 @@ export async function createRemoteWorktree(
           console.error(`[hooks] Failed to prepare setup runner for ${created.path}:`, error)
         }
       }
+      gatedSetup = gateCreatedWorktreeSetup(args, repo, store, yamlHooks, { setup, defaultTabs })
+      setup = gatedSetup.setup
+      defaultTabs = gatedSetup.defaultTabs
     })
   }
 
@@ -2192,6 +2221,7 @@ export async function createRemoteWorktree(
     ...(workspaceLineage ? { workspaceLineage } : {}),
     ...(setup ? { setup } : {}),
     ...(defaultTabs ? { defaultTabs } : {}),
+    ...(gatedSetup.setupApproval ? { setupApproval: gatedSetup.setupApproval } : {}),
     ...(localBaseRefRefresh ? { localBaseRefRefresh } : {}),
     ...(localBaseRefUpdateSuggestion ? { localBaseRefUpdateSuggestion } : {}),
     ...(baseFallback ? { baseFallback } : {}),
@@ -2897,9 +2927,11 @@ async function performLocalWorktreeCreate(
     })
   }
 
-  // Why: the worktree's base-branch `orca.yaml` is authoritative; we don't re-gate on content parity with the primary checkout since benign divergence silently disabled setup (#1280).
+  // Why: the worktree's base-branch `orca.yaml` is authoritative (#1280), so trust is checked against
+  // that exact content; untrusted content comes back as `setupApproval` instead of being skipped.
   let setup: CreateWorktreeResult['setup']
   let defaultTabs: CreateWorktreeResult['defaultTabs']
+  let gatedSetup: GatedWorktreeSetupLaunch = {}
   await timing.time('prepare_setup', async () => {
     const createdYamlHooks = loadHooks(worktreePath)
     const createdEffectiveHooks = getEffectiveHooksFromConfig(repo, createdYamlHooks)
@@ -2938,6 +2970,12 @@ async function performLocalWorktreeCreate(
         console.error(`[hooks] Failed to prepare setup runner for ${worktreePath}:`, error)
       }
     }
+    gatedSetup = gateCreatedWorktreeSetup(args, repo, store, createdYamlHooks, {
+      setup,
+      defaultTabs
+    })
+    setup = gatedSetup.setup
+    defaultTabs = gatedSetup.defaultTabs
   })
 
   // Startup resolves the new id before lifecycle notifications invalidate runtime caches.
@@ -2971,6 +3009,7 @@ async function performLocalWorktreeCreate(
         ? { setup }
         : {}),
     ...(defaultTabs ? { defaultTabs } : {}),
+    ...(gatedSetup.setupApproval ? { setupApproval: gatedSetup.setupApproval } : {}),
     ...(addResult.localBaseRefRefresh
       ? { localBaseRefRefresh: addResult.localBaseRefRefresh }
       : {}),

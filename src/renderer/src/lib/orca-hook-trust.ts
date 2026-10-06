@@ -1,4 +1,4 @@
-import { sha256 } from './sha256'
+import { hashOrcaHookScriptContent } from '../../../shared/orca-hook-trust'
 
 export type OrcaHookScriptKind = 'setup' | 'archive' | 'issueCommand' | 'vmRecipe'
 
@@ -16,7 +16,7 @@ export async function hashOrcaHookScript(content: string): Promise<string> {
     const digest = await subtle.digest('SHA-256', bytes)
     return bytesToHex(new Uint8Array(digest))
   }
-  return bytesToHex(sha256(bytes))
+  return hashOrcaHookScriptContent(normalized)
 }
 
 function bytesToHex(view: Uint8Array): string {

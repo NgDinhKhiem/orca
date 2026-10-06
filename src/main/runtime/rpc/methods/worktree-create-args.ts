@@ -64,6 +64,7 @@ export function buildManagedWorktreeCreateArgs(
       defaultTarget: 'host'
     }),
     setupDecision: params.setupDecision,
+    ...(params.setupTrust ? { setupTrust: params.setupTrust } : {}),
     createdWithAgent: params.createdWithAgent ?? params.startupAgent,
     ...provenance,
     startup: params.startupCommand

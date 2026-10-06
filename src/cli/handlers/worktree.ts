@@ -1,3 +1,4 @@
+import { printSetupApprovalWarning } from './worktree-setup-approval-warning'
 import type {
   RuntimeWorktreeListResult,
   RuntimeWorktreePsResult,
@@ -238,6 +239,7 @@ export const WORKTREE_HANDLERS: Record<string, CommandHandler> = {
         : {})
     })
     printHookWarning(result.result, json)
+    printSetupApprovalWarning(result.result, json)
     printLineageSummary(result.result, json)
     printResult(result, json, formatWorktreeShow)
   },

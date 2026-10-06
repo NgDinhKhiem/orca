@@ -37,6 +37,7 @@ export async function requestRuntimeRemoteWorktree(
       ...(args.branchNameOverride ? { branchNameOverride: args.branchNameOverride } : {}),
       ...(args.runHooks ? { setupDecision: 'run' as const } : {}),
       ...(!args.runHooks && args.setupDecision ? { setupDecision: args.setupDecision } : {}),
+      ...(args.setupTrust ? { setupTrust: args.setupTrust } : {}),
       ...(args.sparseCheckout ? { sparseCheckout: args.sparseCheckout } : {}),
       ...(args.linkedIssue != null ? { linkedIssue: args.linkedIssue } : {}),
       ...(args.linkedPR != null ? { linkedPR: args.linkedPR } : {}),

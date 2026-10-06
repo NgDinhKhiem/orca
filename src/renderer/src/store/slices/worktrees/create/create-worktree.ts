@@ -28,6 +28,8 @@ import {
   type WorktreeCreateAttempt,
   type WorktreeCreateRequest
 } from './worktree-create-payload'
+import { resolveWorktreeSetupApproval } from './worktree-setup-approval'
+import { confirmWorktreeSetupContent, getOrcaSetupTrustGrant } from '@/lib/ensure-hooks-confirmed'
 import {
   notifyWorktreeParentDropped,
   resolveWorktreeCreateParent,
@@ -154,7 +156,8 @@ export function createCreateWorktree(
       linkedAzureDevOpsPR,
       linkedGiteaPR,
       compareBaseRef,
-      options
+      options,
+      setupTrust: getOrcaSetupTrustGrant(get(), repoId)
     }
     try {
       // Why outside the retry loop: a branch-name conflict retry must not re-warn about the same dropped pick.
@@ -216,7 +219,10 @@ export function createCreateWorktree(
             warnParentDroppedOnce()
           }
           applyCreatedWorktree(set, repoId, outcome.result, creationHostId)
-          const { result } = outcome
+          // Why: the host withholds setup whose worktree content is untrusted; show that content.
+          const result = await resolveWorktreeSetupApproval(outcome.result, (approval) =>
+            confirmWorktreeSetupContent(get, repoId, approval.scriptContent, creationHostId)
+          )
           showLocalBaseRefRefreshToast(result.localBaseRefRefresh, result.worktree)
           if (result.baseFallback) {
             requestWorktreeBaseFallbackNotice(result.baseFallback)

