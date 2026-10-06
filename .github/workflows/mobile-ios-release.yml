@@ -31,6 +31,9 @@ on:
           - native
           - ota
 
+permissions:
+  contents: read
+
 jobs:
   ios-build:
     # GitHub-hosted macOS runner: required for Xcode. Expo SDK 55's

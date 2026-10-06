@@ -58,6 +58,9 @@ concurrency:
   group: mobile-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     if: github.event_name == 'pull_request'
