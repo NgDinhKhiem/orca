@@ -3,6 +3,7 @@ import { spawnProcess } from '../shared/child-process/run-process'
 import { forceTerminateProcessTree } from '../shared/child-process/process-tree-termination'
 import { createChildTerminationReporter } from '../shared/child-process/child-termination-reporter'
 import { GitCommandTimeoutError, gitCommandTimeoutMs } from '../shared/git-command-timeout'
+import { withGitRepoConfigCommandGuard } from '../shared/git-repo-config-command-guard'
 import { expandTilde } from './context'
 import { buildRelayGitEnv } from './relay-command-env'
 import { acquireRelayGitAdmission } from './git-handler-command-termination'
@@ -50,7 +51,7 @@ export const streamRelayGitStdout: RelayGitStreamExec = async (args, cwd, option
       }
       child = spawnProcess({
         program: 'git',
-        args,
+        args: withGitRepoConfigCommandGuard(args),
         cwd: resolvedCwd,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],

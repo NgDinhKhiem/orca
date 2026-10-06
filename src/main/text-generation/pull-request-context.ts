@@ -217,7 +217,15 @@ export async function getPullRequestDraftContext(
       range
     ]),
     safeExec(execGit, ['diff', '--name-status', range]),
-    safeExec(execGit, ['diff', '--patch', '--minimal', '--no-color', '--no-ext-diff', range])
+    safeExec(execGit, [
+      'diff',
+      '--patch',
+      '--minimal',
+      '--no-color',
+      '--no-ext-diff',
+      '--no-textconv',
+      range
+    ])
   ])
 
   if (!commitSummary && !changeSummary && !patch) {

@@ -567,7 +567,7 @@ describe('getStagedCommitContext', () => {
     })
     expect(gitExecFileAsyncMock).toHaveBeenNthCalledWith(
       3,
-      ['diff', '--cached', '--patch', '--minimal', '--no-color', '--no-ext-diff'],
+      ['diff', '--cached', '--patch', '--minimal', '--no-color', '--no-ext-diff', '--no-textconv'],
       {
         cwd: '/repo',
         maxBuffer: 10 * 1024 * 1024

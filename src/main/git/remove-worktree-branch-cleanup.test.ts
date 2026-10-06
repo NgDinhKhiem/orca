@@ -219,7 +219,7 @@ branch refs/heads/main
       'git merge-base target123 refs/heads/feature/test': {
         stdout: 'base123\n'
       },
-      'git diff base123 refs/heads/feature/test': {
+      'git diff --no-ext-diff --no-textconv base123 refs/heads/feature/test': {
         stdout: 'branch net diff\n'
       },
       'git patch-id --stable#1': {
@@ -228,7 +228,7 @@ branch refs/heads/main
       'git rev-list --ancestry-path --max-count=201 base123..target123': {
         stdout: 'squash123\n'
       },
-      'git show --format= squash123': {
+      'git show --no-ext-diff --no-textconv --format= squash123': {
         stdout: 'squash diff\n'
       },
       'git patch-id --stable#2': {

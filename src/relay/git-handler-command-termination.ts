@@ -7,6 +7,7 @@ import { runProcess } from '../shared/child-process/run-process'
 import { GitAdmissionScheduler } from '../shared/git-admission-scheduler'
 import type { GitAdmissionRequest } from '../shared/git-admission-state'
 import { gitCommandTimeoutMs } from '../shared/git-command-timeout'
+import { withGitRepoConfigCommandGuard } from '../shared/git-repo-config-command-guard'
 
 export const MAX_GIT_BUFFER = 10 * 1024 * 1024
 let scheduler = new GitAdmissionScheduler()
@@ -42,7 +43,7 @@ export async function runGitToTermination(
   const result = await runProcess(
     {
       program: 'git',
-      args,
+      args: withGitRepoConfigCommandGuard(args),
       cwd: options.cwd,
       env: options.env,
       timeoutMs: gitCommandTimeoutMs(args, options.timeout) ?? null,

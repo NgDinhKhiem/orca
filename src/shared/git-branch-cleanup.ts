@@ -188,7 +188,14 @@ async function branchNetPatchMatchesTargetSquashCommit(
 
   const branchPatchId = await computeStablePatchId(
     runGit,
-    await readOptionalGitRawStdout(runGit, ['diff', mergeBase, branchRef])
+    // Why: a repo's diff.external / textconv drivers run commands and rewrite the patch being hashed.
+    await readOptionalGitRawStdout(runGit, [
+      'diff',
+      '--no-ext-diff',
+      '--no-textconv',
+      mergeBase,
+      branchRef
+    ])
   )
   if (!branchPatchId) {
     return false
@@ -212,7 +219,13 @@ async function branchNetPatchMatchesTargetSquashCommit(
   for (const commitOid of commits) {
     const commitPatchId = await computeStablePatchId(
       runGit,
-      await readOptionalGitRawStdout(runGit, ['show', '--format=', commitOid])
+      await readOptionalGitRawStdout(runGit, [
+        'show',
+        '--no-ext-diff',
+        '--no-textconv',
+        '--format=',
+        commitOid
+      ])
     )
     // Why: a matching patch-id identifies a possible squash commit, but the
     // tree merge proves the branch contributes no additional changes there.

@@ -1,6 +1,7 @@
 import { waitForPromiseWithSignal } from '../../../shared/abort-signal-reason'
 import { withTimeout } from '../../../shared/promise-timeout-fallback'
 import { parseWslPath } from '../../wsl'
+import { withGitRepoConfigCommandGuard } from '../../../shared/git-repo-config-command-guard'
 import { isWslDirectGitReadCommand } from '../wsl-direct-git-read-commands'
 import {
   disableWslGitReadEnvironment,
@@ -30,7 +31,13 @@ export function resolveGitCommand(
 ): ResolvedCommand {
   if (usesHostGitForWslLinkedWorktree(options.cwd, options.wslDistro)) {
     // Why: WSL Git resolves a Windows-authored linked-worktree pointer relative to cwd.
-    return { binary: 'git', args, cwd: options.cwd, wsl: null, wslMode: null }
+    return {
+      binary: 'git',
+      args: withGitRepoConfigCommandGuard(args),
+      cwd: options.cwd,
+      wsl: null,
+      wslMode: null
+    }
   }
   const distro = directWslGitReadDistro(args, options, forceLoginShell)
   if (distro) {

@@ -20,6 +20,7 @@ import {
   parseQuickOpenGitLsFilesEntry
 } from '../shared/quick-open-readdir-walk'
 import { buildRelayGitEnv } from './relay-command-env'
+import { withGitRepoConfigCommandGuard } from '../shared/git-repo-config-command-guard'
 
 /**
  * List files using `git ls-files`. Fallback when rg is not installed.
@@ -87,7 +88,7 @@ export function listFilesWithGit(
         return maxResults !== undefined && directFileCandidates.size >= maxResults
       }
 
-      const child = spawn('git', ['ls-files', ...args], {
+      const child = spawn('git', withGitRepoConfigCommandGuard(['ls-files', ...args]), {
         cwd: rootPath,
         env: buildRelayGitEnv(),
         stdio: ['ignore', 'pipe', 'pipe']

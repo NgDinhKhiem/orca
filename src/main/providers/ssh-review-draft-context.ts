@@ -24,7 +24,7 @@ export async function execSshReviewDraft(
     const format =
       flags === '--name-status'
         ? 'name-status'
-        : flags === '--patch\0--minimal\0--no-color\0--no-ext-diff'
+        : flags === '--patch\0--minimal\0--no-color\0--no-ext-diff\0--no-textconv'
           ? 'patch'
           : null
     if (format) {

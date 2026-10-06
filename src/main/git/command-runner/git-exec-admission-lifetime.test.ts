@@ -17,6 +17,11 @@ const {
   forceTerminateProcessTreeMock: vi.fn().mockResolvedValue(false)
 }))
 
+// Why: these mocks match on the caller's argv; the guard prefix is covered by its routing tests.
+vi.mock('../../../shared/git-repo-config-command-guard', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  withGitRepoConfigCommandGuard: (args: readonly string[]) => [...args]
+}))
 vi.mock('node:child_process', async (importOriginal) => ({
   ...(await importOriginal()),
   execFile: execFileMock,

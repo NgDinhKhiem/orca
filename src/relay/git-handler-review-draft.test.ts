@@ -1,3 +1,4 @@
+import { GIT_FSMONITOR_DISABLED_ARGS } from '../shared/git-repo-config-command-guard'
 import { readFile, unlink, writeFile } from 'node:fs/promises'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -113,7 +114,7 @@ describe.each([2, 4])('relay review draft diff with %i Git slots', (generalCap) 
     {
       format: 'patch',
       mergeBase: 'A'.repeat(64),
-      flags: ['--patch', '--minimal', '--no-color', '--no-ext-diff']
+      flags: ['--patch', '--minimal', '--no-color', '--no-ext-diff', '--no-textconv']
     }
   ])('routes $format through the fixed command with a full object id', async (request) => {
     const git = vi.fn<GitHandlerOperationHost['git']>().mockResolvedValue(commandResult)
@@ -159,7 +160,13 @@ describe.each([2, 4])('relay review draft diff with %i Git slots', (generalCap) 
     expect(runProcess).toHaveBeenCalledTimes(1)
     const spec = runProcess.mock.calls[0]?.[0]
     expect(spec?.program).toBe('git')
-    expect(spec?.args).toEqual(['diff', '--name-status', `${BASE_OID}..HEAD`, '--'])
+    expect(spec?.args).toEqual([
+      ...GIT_FSMONITOR_DISABLED_ARGS,
+      'diff',
+      '--name-status',
+      `${BASE_OID}..HEAD`,
+      '--'
+    ])
     expect(spec?.cwd).toBe(repo)
     expect(spec?.signal).toBe(controller.signal)
     expect(spec?.timeoutMs).toBe(GIT_READ_TIMEOUT_MS)
