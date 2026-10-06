@@ -1,6 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RelayPublicAssignmentAdmission } from './public-assignment-admission.js'
 
+// A reserved caller whose credential checks out, reduced to the lease it was granted.
+async function reserve(
+  admission: RelayPublicAssignmentAdmission,
+  relayHostId: string,
+  notifyRejected?: Parameters<RelayPublicAssignmentAdmission['acquireReserved']>[2]
+): Promise<{ release(): void } | null> {
+  const result = await admission.acquireReserved(relayHostId, async () => true, notifyRejected)
+  return result.status === 'granted' ? result.lease : null
+}
+
 describe('public assignment admission', () => {
   it('bounds global concurrency and repeated work for one relay host', async () => {
     let now = 0
@@ -100,10 +110,10 @@ describe('public assignment admission', () => {
     })
     const first = await admission.acquire('host-a')
     const second = await admission.acquire('host-b')
-    const reservedPromise = admission.acquireReserved('host-c')
+    const reservedPromise = reserve(admission, 'host-c')
 
     await expect(admission.acquire('host-d')).resolves.toBeNull()
-    await expect(admission.acquireReserved('host-e')).resolves.toBeNull()
+    await expect(reserve(admission, 'host-e')).resolves.toBeNull()
     first?.release()
     const reserved = await reservedPromise
 
@@ -128,10 +138,10 @@ describe('public assignment admission', () => {
     })
     const active = await admission.acquire('host-a')
     const ordinary = admission.acquire('host-b')
-    const reserved = admission.acquireReserved('host-b')
+    const reserved = reserve(admission, 'host-b')
 
-    await expect(ordinary).resolves.toBeNull()
     active?.release()
+    await expect(ordinary).resolves.toBeNull()
     const recovered = await reserved
     expect(recovered).not.toBeNull()
     recovered?.release()
@@ -151,7 +161,7 @@ describe('public assignment admission', () => {
     })
     const first = await admission.acquire('host-a')
     const second = await admission.acquire('host-b')
-    const reserved = admission.acquireReserved('host-c')
+    const reserved = reserve(admission, 'host-c')
 
     expire()
     await expect(reserved).resolves.toBeNull()
@@ -169,7 +179,7 @@ describe('public assignment admission', () => {
       schedule: () => () => undefined
     })
     const assignment = await admission.acquire('host-a')
-    const reservedPromise = admission.acquireReserved('host-a')
+    const reservedPromise = reserve(admission, 'host-a')
 
     await Promise.resolve()
     await expect(admission.acquire('host-b')).resolves.toBeNull()
@@ -248,11 +258,11 @@ describe('public assignment admission', () => {
     })
     const active = await admission.acquire('host-a')
     const ordinary = admission.acquire('host-b')
-    const reserved = admission.acquireReserved('host-b')
+    const reserved = reserve(admission, 'host-b')
 
+    active?.release()
     await expect(ordinary).resolves.toBeNull()
     expect(reasons).toEqual(['superseded'])
-    active?.release()
     const recovered = await reserved
     expect(recovered).not.toBeNull()
     recovered?.release()
@@ -269,15 +279,15 @@ describe('public assignment admission', () => {
       schedule: () => () => undefined,
       onRejected: (reason) => reasons.push(reason)
     })
-    const reserved = await admission.acquireReserved('host-a')
+    const reserved = await reserve(admission, 'host-a')
     expect(reserved).not.toBeNull()
 
-    await expect(admission.acquireReserved('host-a')).resolves.toBeNull()
+    await expect(reserve(admission, 'host-a')).resolves.toBeNull()
     expect(reasons).toEqual(['host-in-flight'])
 
-    const second = await admission.acquireReserved('host-b')
+    const second = await reserve(admission, 'host-b')
     expect(second).not.toBeNull()
-    await expect(admission.acquireReserved('host-c')).resolves.toBeNull()
+    await expect(reserve(admission, 'host-c')).resolves.toBeNull()
 
     expect(reasons).toEqual(['host-in-flight', 'reserved-unavailable'])
     reserved?.release()
@@ -302,9 +312,9 @@ describe('public assignment admission', () => {
     const active = await admission.acquire('host-a')
     // 'host-b' waits, then reserved recovery for the same host displaces it.
     const ordinary = admission.acquire('host-b', (reason) => displaced.push(reason))
-    const reserved = admission.acquireReserved('host-b', (reason) => queued.push(reason))
-    await expect(ordinary).resolves.toBeNull()
+    const reserved = reserve(admission, 'host-b', (reason) => queued.push(reason))
     active?.release()
+    await expect(ordinary).resolves.toBeNull()
     const recovered = await reserved
     recovered?.release()
     await admission.acquire('host-a', (reason) => throttled.push(reason))
@@ -323,12 +333,59 @@ describe('public assignment admission', () => {
       onRejected: (reason) => reasons.push(reason)
     })
     const first = await admission.acquire('host-a')
-    const second = await admission.acquireReserved('host-b')
+    const second = await reserve(admission, 'host-b')
 
     expect(first).not.toBeNull()
     expect(second).not.toBeNull()
     expect(reasons).toEqual([])
     first?.release()
     second?.release()
+  })
+
+  it('authenticates a reserved caller before touching its host queue or retry clock', async () => {
+    const reasons: string[] = []
+    const admission = new RelayPublicAssignmentAdmission({
+      maxConcurrent: 1,
+      maxQueued: 1,
+      waitMs: 1_000,
+      maxReservedConcurrent: 1,
+      reservedWaitMs: 1_000,
+      minIntervalMs: 5_000,
+      now: () => 0,
+      schedule: () => () => undefined,
+      onRejected: (reason) => reasons.push(reason)
+    })
+    const active = await admission.acquire('host-a')
+    const ordinary = admission.acquire('host-b')
+    const authenticate = vi.fn(async () => null)
+    const forged = admission.acquireReserved('host-b', authenticate)
+
+    await Promise.resolve()
+    expect(authenticate).not.toHaveBeenCalled()
+    active?.release()
+    await expect(forged).resolves.toEqual({ status: 'unauthenticated' })
+    const queued = await ordinary
+    expect(queued).not.toBeNull()
+    queued?.release()
+    const genuine = await admission.acquireReserved('host-b', async () => 'credential')
+
+    expect(genuine).toMatchObject({ status: 'granted', credential: 'credential' })
+    expect(reasons).toEqual([])
+    if (genuine.status === 'granted') genuine.lease.release()
+  })
+
+  it('returns the reserved permit when authentication throws', async () => {
+    const admission = new RelayPublicAssignmentAdmission({
+      maxConcurrent: 1,
+      maxReservedConcurrent: 1,
+      minIntervalMs: 0
+    })
+
+    await expect(
+      admission.acquireReserved('host-a', async () => {
+        throw new Error('database unavailable')
+      })
+    ).rejects.toThrow('database unavailable')
+    await expect(admission.acquire('host-b')).resolves.not.toBeNull()
   })
 })

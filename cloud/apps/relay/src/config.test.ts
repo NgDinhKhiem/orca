@@ -307,3 +307,31 @@ describe('GCE relay capacity configuration', () => {
     )
   })
 })
+
+describe('relay trusted proxy depth', () => {
+  it('reads the last forwarded hop on Cloud Run, which sets K_SERVICE', () => {
+    const env = cellEnvironment(4_000)
+    env.K_SERVICE = 'orca-relay'
+    expect(loadRelayConfig(env).trustedProxyHops).toBe(0)
+  })
+
+  it('skips the load balancer hop on GCE, where nothing sets K_SERVICE', () => {
+    expect(loadRelayConfig(cellEnvironment(4_000)).trustedProxyHops).toBe(1)
+  })
+
+  it('lets each deployment pin its depth explicitly and bounds it', () => {
+    const env = cellEnvironment(4_000)
+    env.K_SERVICE = 'orca-relay'
+    env.ORCA_RELAY_TRUSTED_PROXY_HOPS = '1'
+    expect(loadRelayConfig(env).trustedProxyHops).toBe(1)
+    delete env.K_SERVICE
+    env.ORCA_RELAY_TRUSTED_PROXY_HOPS = '0'
+    expect(loadRelayConfig(env).trustedProxyHops).toBe(0)
+    env.ORCA_RELAY_TRUSTED_PROXY_HOPS = ''
+    expect(loadRelayConfig(env).trustedProxyHops).toBe(1)
+    for (const invalid of ['-1', '9', '1.5', 'one']) {
+      env.ORCA_RELAY_TRUSTED_PROXY_HOPS = invalid
+      expect(() => loadRelayConfig(env)).toThrow()
+    }
+  })
+})

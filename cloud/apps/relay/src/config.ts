@@ -20,6 +20,9 @@ export const RELAY_DATABASE_POOL_MAX = 10
 export const RELAY_DIRECTOR_DATABASE_POOL_MAX = 3
 export const RELAY_PUBLIC_RESOLVE_CONCURRENCY = 1
 export const RELAY_PUBLIC_RESOLVE_WAIT_MS = 5_000
+// Unauthenticated resume lookups per client address per director instance; carrier NAT
+// puts many phones behind one address, so this is sized for a crowd, not one device.
+export const RELAY_PUBLIC_RESOLVE_REQUESTS_PER_MINUTE_PER_IP = 60
 export { RELAY_CELL_CONNECTION_HARD_CAP }
 
 const RelayCellConnectionHardCapSchema = z.custom<RelayCellConnectionHardCap>(
@@ -94,6 +97,10 @@ const EnvSchema = z.object({
     .optional(),
   ORCA_RELAY_ADMIN_JWKS_URL: z.string().url().default('https://www.googleapis.com/oauth2/v3/certs'),
   ORCA_RELAY_DATABASE_POOL_MAX: z.coerce.number().int().positive().max(100).optional(),
+  ORCA_RELAY_TRUSTED_PROXY_HOPS: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().int().nonnegative().max(8).optional()
+  ),
   ORCA_RELAY_READINESS_JWKS_GRACE_MS: readinessGraceSchema(RELAY_READINESS_JWKS_GRACE_MS),
   ORCA_RELAY_READINESS_SQL_GRACE_MS: readinessGraceSchema(RELAY_READINESS_SQL_GRACE_MS),
   ORCA_RELAY_PUBLIC_ASSIGNMENTS_ENABLED: EnvironmentBooleanSchema,
@@ -213,6 +220,8 @@ export type RelayConfig = {
   connectionUnobservedBound?: number
   adminJwksUrl: string
   databasePoolMax: number
+  // Proxies that append to x-forwarded-for after the client; see readForwardedClientIp.
+  trustedProxyHops?: number
   readinessJwksGraceMs?: number
   readinessSqlGraceMs?: number
   publicAssignmentsEnabled: boolean
@@ -367,6 +376,10 @@ export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
     connectionUnobservedBound: ownCell.connectionUnobservedBound,
     adminJwksUrl: parsed.ORCA_RELAY_ADMIN_JWKS_URL,
     databasePoolMax,
+    // Why: one image serves Cloud Run (no proxy hop; it always sets K_SERVICE) and GCE
+    // cells behind the HTTPS load balancer (one hop), so the default follows the platform.
+    trustedProxyHops:
+      parsed.ORCA_RELAY_TRUSTED_PROXY_HOPS ?? (env.K_SERVICE ? 0 : 1),
     readinessJwksGraceMs: parsed.ORCA_RELAY_READINESS_JWKS_GRACE_MS,
     readinessSqlGraceMs: parsed.ORCA_RELAY_READINESS_SQL_GRACE_MS,
     publicAssignmentsEnabled: parsed.ORCA_RELAY_PUBLIC_ASSIGNMENTS_ENABLED,

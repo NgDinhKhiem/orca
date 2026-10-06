@@ -17,6 +17,7 @@ import { WebSocketServer } from 'ws'
 import type WebSocket from 'ws'
 import type { RawData } from 'ws'
 import { createRelayApp } from './app.js'
+import { readForwardedClientIp } from './client-ip-rate-limit.js'
 import { RelayAssignmentStore } from './assignment-store.js'
 import type { RelayConfig } from './config.js'
 import { RelayCredentialStore } from './credential-store.js'
@@ -61,15 +62,12 @@ function guardSocketErrors(socket: WebSocket, kind: string): void {
   })
 }
 
-function admissionSource(request: IncomingMessage): string {
-  const forwarded = request.headers['x-forwarded-for']
-  const chain = (Array.isArray(forwarded) ? forwarded.join(',') : (forwarded ?? ''))
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-  // Google Front End appends client and load-balancer addresses after any
-  // caller-supplied values, so only the penultimate hop is trustworthy.
-  return chain.length >= 2 ? chain.at(-2)! : (request.socket.remoteAddress ?? 'unknown')
+function admissionSource(request: IncomingMessage, trustedProxyHops: number): string {
+  return (
+    readForwardedClientIp(request.headers['x-forwarded-for'], trustedProxyHops) ??
+    request.socket.remoteAddress ??
+    'unknown'
+  )
 }
 
 function firstPayload(raw: RawData, expectedType: string): unknown {
@@ -319,7 +317,7 @@ export function createRelayServer(
 
   server.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url ?? '/', config.publicUrl)
-    const source = admissionSource(request)
+    const source = admissionSource(request, config.trustedProxyHops ?? 0)
     if (url.search) {
       rejectUpgrade(socket, 400, 'Bad Request')
       return
