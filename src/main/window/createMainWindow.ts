@@ -8,6 +8,7 @@ import { formatBrowserClientHostIdArgument } from '../../shared/browser-client-h
 import { markSystemSessionEnding } from '../crash-reporting/expected-teardown-state'
 import { recordDurableCrashBreadcrumb } from '../crash-reporting/durable-crash-breadcrumb'
 import { clearTrustedUIRendererWebContentsId, setTrustedUIRendererWebContentsId } from '../ipc/ui'
+import { registerTrustedAppWebContents } from '../ipc/trusted-ipc-sender-gate'
 import type { Store } from '../persistence'
 import { closeDashboardPopout } from './dashboard-popout-window'
 import {
@@ -143,6 +144,7 @@ export function createMainWindow(
   installWindowsPathRegistryChangeListener(mainWindow)
   // Why: native paste fallback is privileged IPC; only the top-level renderer may request it.
   setTrustedUIRendererWebContentsId(rendererWebContentsId)
+  registerTrustedAppWebContents(mainWindow.webContents)
 
   // Unlike query-session-end, session-end cannot be canceled before this signal is recorded.
   if (process.platform === 'win32') {

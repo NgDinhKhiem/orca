@@ -1,4 +1,6 @@
-import { app, clipboard, dialog, type BrowserWindow } from 'electron'
+import { app, clipboard, dialog, ipcMain, type BrowserWindow } from 'electron'
+import { is } from '@electron-toolkit/utils'
+import { join } from 'node:path'
 import { parseSkillShareId } from '../shared/skill-share-link'
 import { createMacAppActivationHandler } from './window/macos-app-activation'
 import { isBackgroundLaunch } from './window/foreground-activation-policy'
@@ -10,6 +12,7 @@ import { openMainWindow as openMainWindowController } from './startup/main-windo
 import { mainProcessState as state } from './startup/main-process-state'
 import { runMainProcessPreflight } from './startup/main-process-preflight'
 import { registerMainProcessIpcHandlers } from './startup/main-process-ipc-bootstrap'
+import { installAppIpcSenderGate } from './ipc/trusted-ipc-sender-gate'
 import { initializeMainProcessReady } from './startup/main-process-ready'
 import { installMainProcessQuitHandlers } from './startup/main-process-quit'
 import { shouldActivateDesktopForSecondInstance } from './startup/single-instance-lock'
@@ -117,6 +120,11 @@ if (preflightReady) {
   state.skillShareDeepLinks.capture(process.argv)
   // Why no publish: nothing is listening this early, so the first renderer pulls these on mount.
   state.osOpenedDocuments.capture(process.argv)
+  // Why: installed before the first registration so every channel is sender-gated.
+  installAppIpcSenderGate(ipcMain, {
+    rendererDirectory: join(__dirname, '../renderer'),
+    devServerUrl: is.dev ? (process.env.ELECTRON_RENDERER_URL ?? null) : null
+  })
   registerMainProcessIpcHandlers()
   installMainProcessQuitHandlers()
   void app.whenReady().then(async () => {
