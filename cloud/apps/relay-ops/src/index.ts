@@ -6,6 +6,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { DashboardSnapshotCache } from './dashboard-snapshot.js'
 import { createGcloudClient } from './gcloud-client.js'
+import { hostHeaderAllowlist, relayOpsAllowedHosts } from './host-header-allowlist.js'
 import {
   dispatchStagingPowerWorkflow,
   parseStagingPowerRequest
@@ -28,6 +29,7 @@ function safeEqual(left: string, right: string): boolean {
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer)
 }
 
+app.use('*', hostHeaderAllowlist(relayOpsAllowedHosts(port, process.env.RELAY_OPS_ALLOWED_HOSTS)))
 app.use('*', async (context, next) => {
   await next()
   context.header('Cache-Control', 'no-store')

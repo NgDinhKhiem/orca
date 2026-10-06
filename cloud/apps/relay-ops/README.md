@@ -30,6 +30,12 @@ tailscale serve --bg http://127.0.0.1:2455
 tailscale serve status
 ```
 
+The server answers only requests whose `Host` is `127.0.0.1:<port>` or `localhost:<port>`, which stops DNS-rebinding pages from reading it. Tailscale Serve forwards its own hostname, so start the dashboard with that name allowed (comma-separated for several):
+
+```sh
+RELAY_OPS_ALLOWED_HOSTS=ops-box.your-tailnet.ts.net pnpm ops:relay
+```
+
 Share the HTTPS URL printed by `tailscale serve status` with the team. Limit access to the intended operator group in the tailnet ACL. Do not use a public funnel. Stop sharing with:
 
 ```sh
@@ -55,6 +61,7 @@ Even in this mode the service never changes GCP directly. It dispatches `.github
 - Sleeping staging is inventory-only. Viewing it does not probe or cold-start Cloud Run services and cannot resize empty MIGs.
 - Partial GCP or GitHub failures degrade the affected panel and produce a sanitized warning.
 - Missing cell inventory renders as `Unknown`, never `Sleeping`. After one successful read, transient credential or collector failures retain the last good snapshot and mark it stale.
+- Requests with a `Host` outside loopback and `RELAY_OPS_ALLOWED_HOSTS` are refused.
 - Responses use `no-store`, a restrictive CSP, frame denial, and no-referrer headers.
 
 ## Verification
