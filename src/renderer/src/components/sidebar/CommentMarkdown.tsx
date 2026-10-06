@@ -177,9 +177,26 @@ const commentMarkdownSanitizeSchema = {
   }
 }
 
+type HastTransform = ReturnType<typeof rehypeRaw>
+type HastNode = Parameters<HastTransform>[0] | Parameters<HastTransform>[0]['children'][number]
+
+function containsRawHtml(node: HastNode): boolean {
+  return node.type === 'raw' || ('children' in node && node.children.some(containsRawHtml))
+}
+
+// Why: rehype-raw re-parses the whole tree through parse5, which costs every streamed chat frame;
+// like the markdown preview, run it only when the markdown actually carried raw HTML.
+function rehypeRawWhenPresent(): HastTransform {
+  const transform = rehypeRaw()
+  return (tree, file) => (containsRawHtml(tree) ? transform(tree, file) : tree)
+}
+
 // Why: GitHub comments often include safe raw HTML (`<sub>`, `<details>`,
 // `<br />`). Parse it, then sanitize immediately before React renders it.
-const rehypePlugins: MarkdownPlugins = [rehypeRaw, [rehypeSanitize, commentMarkdownSanitizeSchema]]
+const rehypePlugins: MarkdownPlugins = [
+  rehypeRawWhenPresent,
+  [rehypeSanitize, commentMarkdownSanitizeSchema]
+]
 
 type CommentMarkdownProps = React.ComponentPropsWithoutRef<'div'> & {
   content: string
