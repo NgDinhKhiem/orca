@@ -218,11 +218,27 @@ export const profileStateAuthoritySelectedSchema = z
 export const hookInstallAgentSchema = z.enum(AGENT_HOOK_TARGETS)
 export type HookInstallAgent = z.infer<typeof hookInstallAgentSchema>
 
-// Why: config-shape errors (not user content); callers must truncate before `track` — `.max(200)` drops overlength strings.
+export const AGENT_HOOK_INSTALL_ERROR_KINDS = [
+  'permission_denied',
+  'not_found',
+  'read_only_filesystem',
+  'disk_full',
+  'file_busy',
+  'other_system_error',
+  'invalid_config',
+  'unknown'
+] as const
+export type AgentHookInstallErrorKind = (typeof AGENT_HOOK_INSTALL_ERROR_KINDS)[number]
+
+// Why enum + errno code only: raw install errors embed absolute config paths (usernames).
 export const agentHookInstallFailedSchema = z
   .object({
     agent: hookInstallAgentSchema,
-    error_message: z.string().max(200)
+    error_kind: z.enum(AGENT_HOOK_INSTALL_ERROR_KINDS),
+    error_code: z
+      .string()
+      .regex(/^E[A-Z0-9]{1,15}$/)
+      .optional()
   })
   .strict()
 
