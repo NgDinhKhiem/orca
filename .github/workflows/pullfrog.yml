@@ -65,6 +65,8 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          # Pullfrog strips checkout credentials and authenticates git with its own token.
+          persist-credentials: false
       - name: Recheck review head before starting agent
         id: freshness
         if: needs.review_scope.outputs.number != ''
@@ -78,7 +80,7 @@ jobs:
             core.setOutput('current', pr.state === 'open' && pr.head.sha === process.env.REVIEW_HEAD)
       - name: Run agent
         if: needs.review_scope.outputs.number == '' || steps.freshness.outputs.current == 'true'
-        uses: pullfrog/pullfrog@v0
+        uses: pullfrog/pullfrog@ed800018463e1b84e8e3377f662173aed1da98b0 # v0
         with:
           prompt: ${{ inputs.prompt }}
         env:
