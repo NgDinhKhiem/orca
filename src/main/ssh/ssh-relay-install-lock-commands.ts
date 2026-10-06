@@ -1,6 +1,7 @@
 import { shellEscape } from './ssh-connection-utils'
 import { powerShellCommand, powerShellLiteral } from './ssh-remote-powershell'
 import { isWindowsRemoteHost, type RemoteHostPlatform } from './ssh-remote-platform'
+import { makeRemoteDirectoryCommand } from './ssh-remote-commands'
 
 const INSTALL_LOCK_BOOT_ID_NAME = '.boot-id'
 
@@ -8,12 +9,7 @@ export function acquireInstallLockParentCommand(
   host: RemoteHostPlatform,
   remoteRelayDir: string
 ): string {
-  if (!isWindowsRemoteHost(host)) {
-    return `mkdir -p ${shellEscape(remoteRelayDir)}`
-  }
-  return powerShellCommand(
-    `$null = New-Item -ItemType Directory -Force -Path ${powerShellLiteral(remoteRelayDir)}`
-  )
+  return makeRemoteDirectoryCommand(host, remoteRelayDir)
 }
 
 export function tryCreateInstallLockCommand(host: RemoteHostPlatform, lockDir: string): string {

@@ -2142,7 +2142,10 @@ async function launchRelay(
   const endpointDirArg =
     sockFile === defaultSockFile ? '' : ` --endpoint-dir ${shellEscape(endpointDir)}`
   const ripgrepPathArg = ripgrepPath ? ` --ripgrep-path ${shellEscape(ripgrepPath)}` : ''
-  const launchCmd = `cd ${escapedDir} && nohup ${escapedNode} relay.js --detached --grace-time ${graceTime} --sock-path ${shellEscape(sockFile)}${endpointDirArg} --credential-file ${shellEscape(credentialFile)} --log-file ${shellEscape(logFile)}${ripgrepPathArg} > ${shellEscape(logFile)} 2>&1 </dev/null &`
+  // Why umask only in a subshell: the relay's umask is inherited by every PTY it spawns, so the
+  // log is created owner-only (and an older world-readable one tightened) without changing it.
+  const secureLogCmd = `(umask 077 && : >> ${shellEscape(logFile)} && chmod 600 ${shellEscape(logFile)})`
+  const launchCmd = `cd ${escapedDir} && ${secureLogCmd} && nohup ${escapedNode} relay.js --detached --grace-time ${graceTime} --sock-path ${shellEscape(sockFile)}${endpointDirArg} --credential-file ${shellEscape(credentialFile)} --log-file ${shellEscape(logFile)}${ripgrepPathArg} > ${shellEscape(logFile)} 2>&1 </dev/null &`
   const launchChannel = await conn.exec(launchCmd, { signal })
   launchChannel.on('data', () => {})
   launchChannel.on('error', () => {})

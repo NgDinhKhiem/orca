@@ -41,7 +41,8 @@ export class RotatingLogWriter {
       // concurrent appends atomic; 'w' truncates in place (used as the rotation
       // fallback when a rename cannot succeed — e.g. Windows, where the launch
       // shell's own redirect handle blocks renaming the live file).
-      this.fd = openSync(this.logPath, mode)
+      // Why 0o600: relay logs carry remote paths and errors; other users on the host must not read them.
+      this.fd = openSync(this.logPath, mode, 0o600)
       try {
         this.currentBytes = mode === 'w' ? 0 : statSync(this.logPath).size
       } catch {
