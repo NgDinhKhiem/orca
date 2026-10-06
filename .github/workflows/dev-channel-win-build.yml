@@ -167,7 +167,7 @@ jobs:
           echo "Vetted $CHANNEL $TAG at $REQUESTED_SHA"
 
       - name: Checkout the built commit
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.ref }}
           # This job only reads stablyai/orca and never pushes; every write goes
@@ -194,12 +194,12 @@ jobs:
 
       # pnpm must be on PATH before setup-node so setup-node can locate the store.
       - name: Setup pnpm
-        uses: pnpm/setup@v2
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
         with:
           install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: package.json
           cache: pnpm
@@ -210,7 +210,7 @@ jobs:
       # Caches the Electron binary and electron-builder's tool downloads (nsis,
       # winCodeSign). Same key shape as release-cut's Windows leg.
       - name: Cache electron-builder downloads
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~\AppData\Local\electron\Cache
@@ -225,7 +225,7 @@ jobs:
       # Why host-only: this job packages only for its own runner OS and
       # architecture, so the default host-scoped install is deliberate.
       - name: Install dependencies
-        uses: nick-fields/retry@v4
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
           timeout_minutes: 10
           max_attempts: 3
@@ -268,7 +268,7 @@ jobs:
       # one hour and nothing before this point writes anything.
       - name: Mint dev channel repo token
         id: app_token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ secrets.HOURLY_RELEASE_APP_ID }}
           private-key: ${{ secrets.HOURLY_RELEASE_APP_PRIVATE_KEY }}
@@ -291,7 +291,7 @@ jobs:
           fi
 
       - name: Publish Windows artifacts
-        uses: nick-fields/retry@v4
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
           # 30 is the pack + upload budget; there is no notary queue on this leg.
           timeout_minutes: 30

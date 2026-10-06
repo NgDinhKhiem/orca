@@ -40,7 +40,7 @@ it('shares one setup and runs the unchanged compiler after static checks finish'
 
 it('requires physical preflight success before publishing shards and admitting consumers', () => {
   const join = steps.findIndex((step) => step.wait === 'unit-plan')
-  const upload = steps.findIndex((step) => step.uses === 'actions/upload-artifact@v7')
+  const upload = steps.findIndex((step) => step.uses?.startsWith('actions/upload-artifact@'))
   expect(join).toBeGreaterThan(steps.indexOf(compiler))
   expect(upload).toBeGreaterThan(join)
   expect(steps[upload]['continue-on-error']).toBeUndefined()
@@ -209,7 +209,7 @@ it('pins every foreground and background step to its selected phase', () => {
     ['Verify macOS entitlements', staticPhase],
     ['Cache TypeScript incremental state', typePhase],
     ['pnpm run typecheck', typePhase],
-    ['actions/upload-artifact@v7', typePhase]
+    [expect.stringMatching(/^actions\/upload-artifact@[0-9a-f]{40}$/), typePhase]
   ])
   expect(
     steps

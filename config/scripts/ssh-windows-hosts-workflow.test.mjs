@@ -102,7 +102,7 @@ describe('SSH Windows-host workflow', () => {
       "if('${{ matrix.server }}' -eq 'inbox' -and '${{ matrix.arch }}' -eq 'arm64'){$preparation="
     )
     expect(runStep.background).toBeUndefined()
-    expect(job.steps.at(-1)).toMatchObject({ if: 'always()', uses: 'actions/upload-artifact@v7' })
+    expect(job.steps.at(-1)).toMatchObject({ if: 'always()', uses: expect.stringMatching(/^actions\/upload-artifact@[0-9a-f]{40}$/) })
   })
 
   it('shares one capability installer without bypassing native verification or private cleanup', () => {

@@ -39,7 +39,7 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: refs/tags/${{ inputs.tag }}
 
@@ -52,12 +52,12 @@ jobs:
           git checkout "$WORKFLOW_SHA" -- config/scripts/assert-github-release-is-draft.mjs
 
       - name: Setup pnpm
-        uses: pnpm/setup@v2
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
         with:
           install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: package.json
           cache: pnpm
@@ -68,7 +68,7 @@ jobs:
       # Cache the Electron binary + electron-builder tool downloads (notarytool,
       # winCodeSign, nsis, squirrel, AppImage). Saves ~30-90s per job, incl. mac.
       - name: Cache electron-builder downloads
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/Library/Caches/electron
@@ -84,7 +84,7 @@ jobs:
       # Why both CPUs: the mac config packages x64 and arm64 from this arm64
       # runner, so the install must carry both variants of the native optional deps.
       - name: Install dependencies
-        uses: nick-fields/retry@v4
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
           timeout_minutes: 10
           max_attempts: 3
@@ -136,7 +136,7 @@ jobs:
       # Only a Windows runner compiles these; release-cut's relay-windows-process-tree
       # job built them from this tag before dispatching this workflow.
       - name: Collect the Windows process-table addons for the relay
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: relay-windows-process-tree
           path: .build/windows-process-tree
@@ -160,7 +160,7 @@ jobs:
       - name: Download the orcad deployment template from the release run
         # Why: release-cut skips the template for a tag that predates it.
         if: hashFiles('config/scripts/packaged-orcad-template.cjs') != ''
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: orcad-template
           path: out/orcad-template
@@ -196,7 +196,7 @@ jobs:
           fi
 
       - name: Publish release artifacts (macOS)
-        uses: nick-fields/retry@v4
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
         with:
           timeout_minutes: 45
           max_attempts: 3

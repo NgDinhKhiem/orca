@@ -62,7 +62,7 @@ function execute(options = {}) {
 it('uses trusted inline code and only enters cancellation on an unmerged close', () => {
   expect(workflow.on).toEqual({ pull_request_target: { types: ['closed'] } })
   expect(step.if).toBe('github.event.pull_request.merged == false')
-  expect(step.uses).toBe('actions/github-script@v8')
+  expect(step.uses).toMatch(/^actions\/github-script@[0-9a-f]{40}$/)
   expect(
     workflow.jobs.clean.steps.some((entry) => entry.uses?.startsWith('actions/checkout'))
   ).toBe(false)

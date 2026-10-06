@@ -93,7 +93,7 @@ jobs:
       DEPLOY_WORKLOAD_IDENTITY_PROVIDER: ${{ inputs.environment == 'production' && vars.PRODUCTION_GCP_RELAY_DEPLOY_WORKLOAD_IDENTITY_PROVIDER || vars.STAGING_GCP_RELAY_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}
       DEPLOY_SERVICE_ACCOUNT: ${{ inputs.environment == 'production' && vars.PRODUCTION_GCP_RELAY_DEPLOY_SERVICE_ACCOUNT || vars.STAGING_GCP_RELAY_DEPLOY_SERVICE_ACCOUNT }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Validate exact operation inputs before authentication
         id: inputs
@@ -190,11 +190,11 @@ jobs:
             echo "canary_hostname=${canary_cell##*-}"
           } >> "${GITHUB_OUTPUT}"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: cloud/package.json
         if: ${{ steps.inputs.outputs.canary == 'true' }}
@@ -209,7 +209,7 @@ jobs:
 
       - name: Download immutable rollout evidence
         if: ${{ steps.inputs.outputs.evidence_kind != 'none' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ steps.inputs.outputs.artifact_name }}
           path: ${{ runner.temp }}/relay-asia-input-evidence
@@ -244,7 +244,7 @@ jobs:
           test "$(< "${verified}")" = verified
 
       - id: auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ env.DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
@@ -266,7 +266,7 @@ jobs:
           test "$(jq -r '.role' <<< "${runtime}")" = director
           test "$(jq -r '.imageDigest' <<< "${runtime}")" = "${IMAGE_DIGEST}"
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
 
       - uses: ./.github/actions/cloud-sql-rollout-lease
         with:
@@ -274,7 +274,7 @@ jobs:
           object: ${{ inputs.environment == 'production' && 'terraform/state/cloud-sql-rollout/production.lock' || 'terraform/state/cloud-sql-rollout/staging.lock' }}
         if: ${{ inputs.mode == 'configure' || steps.inputs.outputs.canary == 'true' }}
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         if: ${{ inputs.mode == 'configure' }}
         with:
           terraform_version: 1.15.8
@@ -417,7 +417,7 @@ jobs:
       - name: Upload immutable canary evidence
         id: canary-evidence-upload
         if: ${{ steps.inputs.outputs.canary == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: relay-asia-${{ steps.inputs.outputs.canary_hostname }}-canary-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/relay-asia-output-evidence/evidence.json
@@ -426,7 +426,7 @@ jobs:
 
       - name: Upload sanitized admission result
         if: ${{ inputs.mode != 'configure' && steps.admission-operation.outcome == 'success' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: relay-asia-admission-result-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/relay-asia-admission-result/result.json

@@ -56,10 +56,12 @@ test('the lease step runs after the credential that authorizes it', () => {
       const lines = text.split('\n')
       for (const step of leaseSteps(text)) {
         const before = lines.slice(0, step.line - 1)
-        const gcloud = before.lastIndexOf('      - uses: google-github-actions/setup-gcloud@v2')
+        const gcloud = before.findLastIndex((line) =>
+          line.startsWith('      - uses: google-github-actions/setup-gcloud@')
+        )
         assert.notEqual(gcloud, -1, `${member}: lease step at line ${step.line} has no setup-gcloud before it`)
         assert.ok(
-          before.lastIndexOf('      - uses: actions/checkout@v4') !== -1,
+          before.findLastIndex((line) => line.startsWith('      - uses: actions/checkout@')) !== -1,
           `${member}: lease step at line ${step.line} runs before the local action is checked out`
         )
       }

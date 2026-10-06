@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           # This job only builds and runs the harness locally; it never pushes.
           persist-credentials: false
@@ -47,12 +47,12 @@ jobs:
       # Why: setup-node can restore pnpm's content-addressed store only after
       # the pnpm binary exists, avoiding repeat dependency downloads per run.
       - name: Setup pnpm
-        uses: pnpm/setup@v2
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
         with:
           install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: package.json
           cache: pnpm
@@ -68,7 +68,7 @@ jobs:
       # The daemon relocation lives under src/, so product changes still rebuild.
       - name: Cache branch installer
         id: cache-installer
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: dist/orca-windows-setup.exe
           # The mobile page trees are in the key because beforePack builds the mobile web bundle
@@ -104,7 +104,7 @@ jobs:
       # and NSIS downloads are lockfile-owned and need not be fetched again.
       - name: Cache electron-builder downloads
         if: steps.cache-installer.outputs.cache-hit != 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~\AppData\Local\electron\Cache
@@ -160,7 +160,7 @@ jobs:
 
       - name: Upload crash-survival output
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: win-crash-survival-output
           path: |

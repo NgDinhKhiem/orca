@@ -32,18 +32,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           # This job only reads the repo to build/run the spike; it never pushes.
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: package.json
 
       - name: Setup pnpm
-        uses: pnpm/setup@v2
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
         with:
           install: false
 
@@ -54,7 +54,7 @@ jobs:
       # spike-script-only edits skip the ~15 min electron-builder build.
       - name: Cache unpacked build
         id: cache-unpacked
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: dist/win-unpacked
           # mobile/ is in the key because beforePack requires out/mobile-web, whose bytes are the
@@ -108,7 +108,7 @@ jobs:
 
       - name: Upload spike output
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: daemon-relocation-spike-output
           path: |

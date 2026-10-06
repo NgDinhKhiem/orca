@@ -14,7 +14,7 @@ const actionSteps = action.runs.steps
 const identity = actionSteps.find((step) => step.id === 'orcad-prebuild-cache-identity')
 const restore = actionSteps.find((step) => step.id === 'orcad-prebuild-cache-restore')
 const build = actionSteps.find((step) => step.name?.startsWith('Build and smoke this runner'))
-const save = steps.find((step) => step.uses === 'actions/cache/save@v5')
+const save = steps.find((step) => step.uses?.startsWith('actions/cache/save@'))
 
 function evaluate(expression, context) {
   return runInNewContext(
@@ -132,7 +132,7 @@ describe('Windows server prebuild cache workflow', () => {
   it('restores only the exact key and saves after every qualification gate', () => {
     expect(identity['continue-on-error']).toBe(true)
     expect(identity.run).toBe('node config/scripts/orcad-windows-prebuild-cache.mjs --fingerprint')
-    expect(restore.uses).toBe('actions/cache/restore@v5')
+    expect(restore.uses).toMatch(/^actions\/cache\/restore@[0-9a-f]{40}$/)
     expect(restore['continue-on-error']).toBe(true)
     expect(restore.with['restore-keys']).toBeUndefined()
     expect(action.outputs['cache-path'].value).toBe(restore.with.path)
@@ -145,7 +145,7 @@ describe('Windows server prebuild cache workflow', () => {
     expect(actionSteps.indexOf(restore)).toBeLessThan(actionSteps.indexOf(build))
     expect(save['continue-on-error']).toBe(true)
     expect(steps.indexOf(save)).toBeGreaterThan(steps.indexOf(prepare))
-    expect(actionSteps.some((step) => step.uses === 'actions/cache/save@v5')).toBe(false)
+    expect(actionSteps.some((step) => step.uses?.startsWith('actions/cache/save@'))).toBe(false)
     expect(build.if).toBeUndefined()
     expect(build['continue-on-error']).toBeUndefined()
     for (const gate of steps.filter((step) =>
@@ -182,7 +182,7 @@ describe('SSH Windows consumers of qualified server slots', () => {
         expect(evaluate(identity.if, actionContext(ctx, sshPrepare))).toBe(event === 'pull_request')
         expect(evaluate(restore.if, actionContext(ctx, sshPrepare))).toBe(event === 'pull_request')
       }
-      expect(sshSteps.some((step) => step.uses === 'actions/cache/save@v5')).toBe(false)
+      expect(sshSteps.some((step) => step.uses?.startsWith('actions/cache/save@'))).toBe(false)
     }
   )
 

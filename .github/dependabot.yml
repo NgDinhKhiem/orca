@@ -18,3 +18,9 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
+  # Why: workflow actions are pinned to commit SHAs; this keeps the pins and their `# vN` comments current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5

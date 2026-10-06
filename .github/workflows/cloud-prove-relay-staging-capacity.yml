@@ -79,10 +79,10 @@ jobs:
       EXPECTED_HARD_CAP: ${{ inputs.expected-hard-cap }}
       EXPECTED_UNOBSERVED_BOUND: ${{ inputs.expected-unobserved-bound }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - id: google-auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ vars.STAGING_GCP_RELAY_CAPACITY_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.STAGING_GCP_RELAY_CAPACITY_SERVICE_ACCOUNT }}
@@ -90,19 +90,19 @@ jobs:
           id_token_audience: https://relay-staging.onorca.dev/v1/admin/drain
           id_token_include_email: true
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
 
       - uses: ./.github/actions/cloud-sql-rollout-lease
         with:
           bucket: onorca-cloud-staging-terraform-state
           object: terraform/state/cloud-sql-rollout/staging.lock
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         if: ${{ inputs.mode != 'restore-admission' }}
         with:
           terraform_wrapper: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
 
@@ -613,7 +613,7 @@ jobs:
       TARGET_IMAGE_DIGEST: ${{ inputs.target-image-digest }}
       APPROVED_PREDECESSOR_IMAGE_DIGEST: sha256:ce16d13ce6b633c6fbb1a2afdd6cdb8369645a329d42a8355efa7ad1e60a44f7
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Require the exact bounded C4 refresh
         env:
@@ -629,7 +629,7 @@ jobs:
           test "${PREDECESSOR_IMAGE_DIGEST}" = "${APPROVED_PREDECESSOR_IMAGE_DIGEST}"
 
       - id: google-auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ vars.STAGING_GCP_RELAY_CAPACITY_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.STAGING_GCP_RELAY_CAPACITY_SERVICE_ACCOUNT }}
@@ -637,19 +637,19 @@ jobs:
           id_token_audience: https://relay-staging.onorca.dev/v1/admin/drain
           id_token_include_email: true
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
 
       - uses: ./.github/actions/cloud-sql-rollout-lease
         with:
           bucket: onorca-cloud-staging-terraform-state
           object: terraform/state/cloud-sql-rollout/staging.lock
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: 1.15.8
           terraform_wrapper: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
 
@@ -717,7 +717,7 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - id: state-auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ vars.STAGING_GCP_RELAY_CAPACITY_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.STAGING_GCP_RELAY_CAPACITY_SERVICE_ACCOUNT }}
@@ -791,7 +791,7 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - id: fence-auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ vars.STAGING_GCP_RELAY_CAPACITY_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.STAGING_GCP_RELAY_CAPACITY_SERVICE_ACCOUNT }}
@@ -854,7 +854,7 @@ jobs:
           echo "MIG_STABLE_AT_MS=$(date -u +%s%3N)" >> "${GITHUB_ENV}"
 
       - id: post-auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ vars.STAGING_GCP_RELAY_CAPACITY_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.STAGING_GCP_RELAY_CAPACITY_SERVICE_ACCOUNT }}

@@ -43,7 +43,7 @@ test('the whole surface stays inert until the owner enables cloud operations', (
 })
 
 test('it authenticates through Workload Identity and holds no repository secret', () => {
-  assert.match(workflow, /uses: google-github-actions\/auth@v2/)
+  assert.match(workflow, /uses: google-github-actions\/auth@[0-9a-f]{40} # v2\n/)
   assert.match(workflow, /workload_identity_provider: \$\{\{ vars\.PRODUCTION_GCP_PUSH_DEPLOY_WORKLOAD_IDENTITY_PROVIDER \}\}/)
   assert.match(workflow, /service_account: \$\{\{ vars\.PRODUCTION_GCP_PUSH_DEPLOY_SERVICE_ACCOUNT \}\}/)
   assert.match(workflow, /environment: production/)

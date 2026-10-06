@@ -82,11 +82,11 @@ jobs:
       qualification: ${{ steps.scope.outputs.qualification || steps.graph.outputs.qualification }}
       runners: ${{ steps.scope.outputs.runners || steps.graph.outputs.runners }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 2
           persist-credentials: false
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: package.json
           package-manager-cache: false
@@ -153,7 +153,7 @@ jobs:
     env:
       ORCA_BACKGROUND_LAUNCH: '1'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
@@ -208,7 +208,7 @@ jobs:
           node config/scripts/build-windows-process-tree-relay-addon.mjs --arch=arm64
       - name: Keep the Windows process-table addons for the desktop template
         if: inputs.build_template && matrix.os == 'windows-2022'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: orcad-windows-process-tree
           path: .build/windows-process-tree/
@@ -216,7 +216,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           overwrite: true
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         if: runner.arch == 'X64'
         with:
           node-version: '18'
@@ -235,14 +235,14 @@ jobs:
           steps.orcad-prebuild.outputs.cache-identity-outcome == 'success' &&
           steps.orcad-prebuild.outputs.cache-key != ''
         continue-on-error: true
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ steps.orcad-prebuild.outputs.cache-path }}
           key: ${{ steps.orcad-prebuild.outputs.cache-key }}
       # Linux release slots come from the floor and Alpine lanes; these runners own the rest.
       - name: Keep this runner's qualified slot for the desktop template
         if: inputs.build_template && runner.os != 'Linux'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: orcad-prebuild-${{ matrix.os }}
           path: out/orcad-prebuilds/
@@ -295,7 +295,7 @@ jobs:
             # The image's source-built Git needs no RPM; missing tools come from AlmaLinux.
             dnf --disablerepo='epel*' install -y git procps-ng unzip which xz
           fi
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
@@ -311,7 +311,7 @@ jobs:
       - run: pnpm test:node-server --artifact
       - name: Keep this runner's glibc 2.28 slot for the desktop template
         if: inputs.build_template
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: orcad-prebuild-glibc-${{ matrix.os }}
           path: out/orcad-prebuilds/
@@ -334,7 +334,7 @@ jobs:
     env:
       ORCA_BACKGROUND_LAUNCH: '1'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
@@ -366,7 +366,7 @@ jobs:
           GLIBC217_COMPAT_SLOT
       - name: Keep the glibc 2.17 compat slot for the desktop template
         if: inputs.build_template
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: orcad-prebuild-glibc217
           path: out/orcad-prebuilds/
@@ -393,7 +393,7 @@ jobs:
     env:
       ORCA_BACKGROUND_LAUNCH: '1'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
@@ -425,7 +425,7 @@ jobs:
           NODE_SERVER_QUALIFICATION
       - name: Keep this runner's musl slot for the desktop template
         if: inputs.build_template
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: orcad-prebuild-musl-${{ matrix.os }}
           path: out/orcad-prebuilds/
@@ -443,18 +443,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
       - uses: ./.github/actions/install-node-dependencies
       - name: Collect every lane's slot
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: orcad-prebuild-*
           path: ${{ runner.temp }}/orcad-prebuild-lanes
       - name: Collect the Windows process-table addons
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: orcad-windows-process-tree
           path: .build/windows-process-tree
@@ -475,7 +475,7 @@ jobs:
             du -sh out/orcad-template/targets/*
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: orcad-template
           path: out/orcad-template/

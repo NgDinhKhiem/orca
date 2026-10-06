@@ -386,7 +386,7 @@ test('deploy and capacity identities are used in their intended phases', () => {
     "    if: ${{ github.ref == 'refs/heads/main' }}"
   ])
   const configurationStart = workflow.indexOf('Require production workflow configuration')
-  const configurationEnd = workflow.indexOf('- uses: actions/checkout@v4', configurationStart)
+  const configurationEnd = workflow.indexOf('- uses: actions/checkout@', configurationStart)
   assert.ok(configurationStart >= 0)
   assert.ok(configurationEnd > configurationStart)
   const configurationStep = workflow.slice(configurationStart, configurationEnd)
