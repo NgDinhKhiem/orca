@@ -1,10 +1,11 @@
 import { existsSync, statSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { basename, dirname, resolve } from 'node:path'
 import { normalizeRuntimePathSeparators } from '../../shared/cross-platform-path'
 import { parseWslUncPath } from '../../shared/wsl-paths'
 import { toWindowsWslPath } from '../wsl'
 import { scanGitMarkerSync, resolveRealPathSync } from './repo-git-marker-scan'
-import { gitExecFileSync } from './runner'
+import { gitExecFileAsync, gitExecFileSync } from './runner'
 
 type GitRepoProbeResult = 'repo' | 'not-repo' | 'indeterminate'
 type GitRepoProbe = {
@@ -33,6 +34,35 @@ export function isGitRepo(path: string): boolean {
   }
 
   return isGitRepoFromProbe(path, probeGitRepo(path).result)
+}
+
+/**
+ * {@link isGitRepo} without blocking the main thread: same verdicts, but `rev-parse`
+ * runs through the async runner's git admission control.
+ */
+export async function isGitRepoAsync(path: string): Promise<boolean> {
+  const entry = await stat(path).catch(() => null)
+  if (!entry?.isDirectory()) {
+    return false
+  }
+  let result: GitRepoProbeResult = 'indeterminate'
+  try {
+    const { stdout } = await gitExecFileAsync(
+      ['rev-parse', '--is-inside-work-tree', '--is-bare-repository'],
+      { cwd: path }
+    )
+    result = classifyGitRepoProbe(readGitPathOutput(stdout).split('\n'))
+  } catch {
+    // An unclean answer falls back to the marker scan, as in the sync probe.
+  }
+  return isGitRepoFromProbe(path, result)
+}
+
+function classifyGitRepoProbe([insideWorkTree, bareRepo]: string[]): GitRepoProbeResult {
+  if (insideWorkTree === 'true' || bareRepo === 'true') {
+    return 'repo'
+  }
+  return insideWorkTree === 'false' && bareRepo === 'false' ? 'not-repo' : 'indeterminate'
 }
 
 function isGitRepoFromProbe(path: string, result: GitRepoProbeResult): boolean {
@@ -67,13 +97,8 @@ function probeGitRepo(path: string, includeLocation = false): GitRepoProbe {
         { cwd: path }
       )
     ).split('\n')
-    const [insideWorkTree, bareRepo, gitDir, commonDir] = records
-    const result =
-      insideWorkTree === 'true' || bareRepo === 'true'
-        ? 'repo'
-        : insideWorkTree === 'false' && bareRepo === 'false'
-          ? 'not-repo'
-          : 'indeterminate'
+    const [insideWorkTree, , gitDir, commonDir] = records
+    const result = classifyGitRepoProbe(records)
     const location =
       includeLocation && insideWorkTree === 'true' && records.length !== 4
         ? readGitRepoDirectories(path)

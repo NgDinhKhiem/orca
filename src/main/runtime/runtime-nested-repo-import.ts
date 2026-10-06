@@ -9,8 +9,9 @@ import type {
 } from '../../shared/project-group-types'
 import type { Repo } from '../../shared/repo-types'
 import { awaitWindowsHostGitEnvironmentReady } from '../git/runner'
-import { getRepoName, isGitRepo } from '../git/repo'
+import { getRepoName } from '../git/repo'
 import { scanNestedRepos } from '../project-groups/nested-repo-discovery'
+import { probeLocalNestedRepos } from '../project-groups/nested-repo-local-probe'
 import {
   createNestedProjectGroupResolver,
   resolveNestedRepoSelection
@@ -74,10 +75,10 @@ export class RuntimeNestedRepoImport {
     )
     const importedProjectIdsByRepoPath = new Map<string, string>()
     const importTargetResolver = createNestedRepoImportTargetResolver()
+    const localProbes = await probeLocalNestedRepos(selection.selectedPaths)
     for (const [projectGroupOrder, repoPath] of selection.selectedPaths.entries()) {
       try {
-        await awaitWindowsHostGitEnvironmentReady({ cwd: repoPath })
-        if (!isGitRepo(repoPath)) {
+        if (!localProbes.isGitRepo(projectGroupOrder)) {
           results.push({ path: repoPath, status: 'failed', error: 'Not a valid git repository' })
           continue
         }

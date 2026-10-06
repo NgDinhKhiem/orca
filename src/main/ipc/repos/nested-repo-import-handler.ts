@@ -6,12 +6,12 @@ import type { Repo } from '../../../shared/repo-types'
 import type { ProjectGroupImportResult } from '../../../shared/project-group-types'
 import { DEFAULT_REPO_BADGE_COLOR } from '../../../shared/constants'
 import { normalizeRuntimePathForComparison } from '../../../shared/cross-platform-path'
-import { awaitWindowsHostGitEnvironmentReady } from '../../git/runner'
-import { isGitRepo, getRepoName } from '../../git/repo'
+import { getRepoName } from '../../git/repo'
 import {
   createNestedProjectGroupResolver,
   resolveNestedRepoSelection
 } from '../../project-groups/nested-repo-import'
+import { probeLocalNestedRepos } from '../../project-groups/nested-repo-local-probe'
 import { createNestedRepoImportTargetResolver } from '../../project-groups/nested-repo-import-target'
 import { getSshGitProvider } from '../../providers/ssh-git-dispatch'
 import { LOCAL_EXECUTION_HOST_ID, toSshExecutionHostId } from '../../../shared/execution-host'
@@ -65,6 +65,9 @@ export function registerNestedRepoImportHandler(mainWindow: BrowserWindow, store
       )
       const importedProjectIdsByRepoPath = new Map<string, string>()
       const importTargetResolver = createNestedRepoImportTargetResolver()
+      const localProbes = args.connectionId
+        ? null
+        : await probeLocalNestedRepos(selection.selectedPaths)
 
       for (const [projectGroupOrder, repoPath] of selection.selectedPaths.entries()) {
         try {
@@ -82,8 +85,7 @@ export function registerNestedRepoImportHandler(mainWindow: BrowserWindow, store
             }
             importRepoPath = await importTargetResolver.resolveSsh(repoPath, gitProvider)
           } else {
-            await awaitWindowsHostGitEnvironmentReady({ cwd: repoPath })
-            if (!isGitRepo(repoPath)) {
+            if (!localProbes?.isGitRepo(projectGroupOrder)) {
               results.push({
                 path: repoPath,
                 status: 'failed',

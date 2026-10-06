@@ -119,6 +119,8 @@ export function gitRepoModuleMock(actual: typeof RepoModule): Record<string, unk
     ...actual,
     // Stub only the functions that spawn git / touch the filesystem.
     isGitRepo,
+    // Follows the sync stub so suites that script `isGitRepo` also drive the async probe.
+    isGitRepoAsync: vi.fn(async (path: string) => isGitRepo(path)),
     getGitRepoRoot,
     inspectGitRepoForRegistration: vi.fn((path: string) => ({
       isRepo: isGitRepo(path),
