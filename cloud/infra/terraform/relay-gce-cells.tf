@@ -375,6 +375,16 @@ resource "google_compute_url_map" "relay_gce" {
   }
 }
 
+# Without an explicit policy the proxy uses Google's default, which still accepts TLS 1.0.
+resource "google_compute_ssl_policy" "relay_gce" {
+  count = local.relay_gce_cells_enabled ? 1 : 0
+
+  project         = var.project_id
+  name            = local.relay_gce_name
+  profile         = "MODERN"
+  min_tls_version = "TLS_1_2"
+}
+
 resource "google_compute_target_https_proxy" "relay_gce" {
   count = local.relay_gce_cells_enabled ? 1 : 0
 
@@ -382,6 +392,7 @@ resource "google_compute_target_https_proxy" "relay_gce" {
   name            = local.relay_gce_name
   url_map         = google_compute_url_map.relay_gce[0].id
   certificate_map = "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.relay_gce[0].id}"
+  ssl_policy      = google_compute_ssl_policy.relay_gce[0].id
   quic_override   = "NONE"
 }
 
