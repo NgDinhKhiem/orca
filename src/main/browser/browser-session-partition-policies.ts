@@ -9,6 +9,12 @@ import {
 } from './browser-session-proxy'
 import { hasSystemMediaAccess, requestSystemMediaAccess } from './browser-media-access'
 import { isAutoGrantedBrowserSessionPermission } from './browser-session-permission-policy'
+import { hasAgentClipboardReadGrant } from './browser-agent-clipboard-read-grant'
+import {
+  forgetBrowserMediaConsent,
+  hasBrowserMediaConsent,
+  requestBrowserMediaConsent
+} from './browser-media-permission-consent'
 import { installBrowserSessionUserAgentPolicy } from './browser-session-ua'
 import { getBrowserProcessUserAgentIdentity } from './browser-process-user-agent'
 import {
@@ -130,33 +136,44 @@ export async function installBrowserSessionPartitionPolicies(
     clearBrowserWebAuthnAccessHandlers(sess)
   } else {
     sess.setPermissionRequestHandler((webContents, permission, callback, details) => {
-      // Why: defer media to macOS TCC; denying at the session layer throws NotAllowedError even after the user granted Camera/Mic to the OS.
+      // Why: media needs the user's per-origin consent first, then macOS TCC; denying at the session
+      // layer after both would throw NotAllowedError even though the user granted Camera/Mic.
       if (permission === 'media') {
         // Capture before async handling; opaque frames cannot be attributed to a named site.
         const rawUrl = resolvePermissionNoticeUrl(webContents, details)
-        void requestSystemMediaAccess(
-          details as Electron.MediaAccessPermissionRequest | undefined
-        ).then(
-          (granted) => {
-            if (!granted) {
+        const mediaDetails = details as Electron.MediaAccessPermissionRequest | undefined
+        void requestBrowserMediaConsent({
+          partition,
+          guest: webContents,
+          rawUrl,
+          mediaTypes: mediaDetails?.mediaTypes ?? []
+        })
+          .then((consented) => consented && requestSystemMediaAccess(mediaDetails))
+          .then(
+            (granted) => {
+              if (!granted) {
+                browserManager.notifyPermissionDenied({
+                  guestWebContentsId: webContents.id,
+                  permission,
+                  rawUrl
+                })
+              }
+              callback(granted)
+            },
+            (error: unknown) => {
+              console.error('[permissions] Browser media access failed:', error)
               browserManager.notifyPermissionDenied({
                 guestWebContentsId: webContents.id,
                 permission,
                 rawUrl
               })
+              callback(false)
             }
-            callback(granted)
-          },
-          (error: unknown) => {
-            console.error('[permissions] Browser media access failed:', error)
-            browserManager.notifyPermissionDenied({
-              guestWebContentsId: webContents.id,
-              permission,
-              rawUrl
-            })
-            callback(false)
-          }
-        )
+          )
+        return
+      }
+      if (permission === 'clipboard-read' && hasAgentClipboardReadGrant(webContents.id)) {
+        callback(true)
         return
       }
       const allowed = isAutoGrantedBrowserSessionPermission(permission)
@@ -170,9 +187,19 @@ export async function installBrowserSessionPartitionPolicies(
       }
       callback(allowed)
     })
-    sess.setPermissionCheckHandler((_webContents, permission, _origin, details) => {
+    sess.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
       if (permission === 'media') {
-        return hasSystemMediaAccess(details?.mediaType)
+        return (
+          hasSystemMediaAccess(details?.mediaType) &&
+          hasBrowserMediaConsent(
+            partition,
+            details?.securityOrigin || requestingOrigin,
+            details?.mediaType
+          )
+        )
+      }
+      if (permission === 'clipboard-read') {
+        return hasAgentClipboardReadGrant(webContents?.id)
       }
       if (allowsBrowserWebAuthnPermission(permission, details)) {
         return true
@@ -199,6 +226,7 @@ export function clearBrowserSessionPartitionPolicies(partition: string, sess: Se
   invalidateBrowserSessionProxyApplication(sess)
   retireBrowserSessionUserAgentPolicy(sess)
   configuredPartitions.delete(partition)
+  forgetBrowserMediaConsent(partition)
   browserManager.removeCertificateRequestGuard(sess)
   sess.removeListener('will-download', handleWillDownload)
   sess.removeListener('will-download', handleDeniedWillDownload)

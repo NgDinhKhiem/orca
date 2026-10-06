@@ -17,6 +17,13 @@ const processUserAgentMode = vi.hoisted(() => {
 })
 
 vi.mock('electron', () => ({
+  // Why: media consent prompts in the guest's host window; the user answers Allow here.
+  BrowserWindow: { fromWebContents: () => ({ isDestroyed: () => false }) },
+  dialog: {
+    showMessageBox: async (_window: unknown, options: { buttons: string[] }) => ({
+      response: options.buttons.indexOf('Allow')
+    })
+  },
   session: {
     fromPartition: sessionFromPartitionMock
   },
@@ -456,11 +463,21 @@ describe('BrowserSessionRegistry', () => {
     const checkHandler = mockSession.setPermissionCheckHandler.mock.calls[0][0]
 
     const cb = vi.fn()
-    const guestWc = { id: 7, getURL: vi.fn(() => 'https://example.com/') }
+    const guestWc = {
+      id: 7,
+      getURL: vi.fn(() => 'https://example.com/'),
+      hostWebContents: { id: 1 }
+    }
     requestHandler(guestWc, 'media', cb, { mediaTypes: ['video'] })
     await vi.waitFor(() => expect(cb).toHaveBeenCalledWith(true))
 
-    expect(checkHandler(null, 'media', '', { mediaType: 'video' })).toBe(true)
+    expect(
+      checkHandler(null, 'media', '', {
+        mediaType: 'video',
+        securityOrigin: 'https://example.com/'
+      })
+    ).toBe(true)
+    expect(checkHandler(null, 'media', '', { mediaType: 'video' })).toBe(false)
     expect(checkHandler(null, 'notifications', '', {})).toBe(true)
     expect(checkHandler(null, 'persistent-storage', '', {})).toBe(true)
     expect(checkHandler(null, 'geolocation', '', {})).toBe(false)

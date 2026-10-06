@@ -255,12 +255,14 @@ describe('BrowserSessionRegistry persistence', () => {
     await vi.waitFor(() =>
       expect(permissionCallback.mock.calls).toEqual([
         [true],
-        [true],
+        // clipboard-read: no agent read in flight for this page.
+        [false],
         [true],
         [true],
         [true],
         [false],
-        [true]
+        // media: this guest has no host window to ask the user in, so it fails closed.
+        [false]
       ])
     )
     expect(browserManagerNotifyPermissionDeniedMock).toHaveBeenCalledWith({
@@ -268,6 +270,11 @@ describe('BrowserSessionRegistry persistence', () => {
       permission: 'geolocation',
       rawUrl: 'https://example.com/account'
     })
+    await vi.waitFor(() =>
+      expect(browserManagerNotifyPermissionDeniedMock).toHaveBeenCalledWith(
+        expect.objectContaining({ permission: 'media' })
+      )
+    )
 
     // A subframe denial must name the requester, not its top-level embedder.
     browserManagerNotifyPermissionDeniedMock.mockClear()
@@ -324,12 +331,12 @@ describe('BrowserSessionRegistry persistence', () => {
       browserManagerNotifyPermissionDeniedMock.mock.calls.map(([args]) => args.permission)
     ).toEqual(['geolocation'])
     expect(checkHandler(null, 'fullscreen', '')).toBe(true)
-    expect(checkHandler(null, 'clipboard-read', '')).toBe(true)
+    expect(checkHandler(null, 'clipboard-read', '')).toBe(false)
     expect(checkHandler(null, 'clipboard-sanitized-write', '')).toBe(true)
     expect(checkHandler(null, 'notifications', '')).toBe(true)
     expect(checkHandler(null, 'persistent-storage', '')).toBe(true)
     expect(checkHandler(null, 'geolocation', '')).toBe(false)
-    expect(checkHandler(null, 'media', '', { mediaType: 'video' })).toBe(true)
+    expect(checkHandler(null, 'media', '', { mediaType: 'video' })).toBe(false)
 
     // Why: this session allows unpartitioned third-party cookies, so a cross-site frame already has
     // the access requestStorageAccess() would grant. Denying it protected nothing and only broke

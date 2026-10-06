@@ -41,6 +41,7 @@ describe('browser notice formatting', () => {
   })
 
   it.each([
+    ['clipboard-read', 'permission to read your clipboard'],
     ['storage-access', 'access to its own cookies and storage while embedded on this page'],
     ['idle-detection', 'permission to detect when you are idle'],
     ['display-capture', 'permission to capture your screen'],
