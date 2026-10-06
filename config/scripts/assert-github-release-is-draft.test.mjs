@@ -138,7 +138,9 @@ describe('release draft workflow contract', () => {
     expect(abortParentStep.run).toContain('refusing to publish mac artifacts')
     expect(macDraftStep.shell).toBe('bash')
     expect(macDraftStep.run).toContain('assert-github-release-is-draft.mjs')
-    expect(macDraftStep.run).toContain('inputs.tag')
+    expect(macDraftStep.run).toContain('"$TAG"')
+    expect(macDraftStep.run).not.toContain('${{')
+    expect(macDraftStep.env.TAG).toBe('${{ inputs.tag }}')
     expect(macPublishStep.with.command).toContain('-c.publish.releaseType=draft')
 
     const linuxCommands = releaseWorkflow.jobs.build.strategy.matrix.include

@@ -62,12 +62,13 @@ jobs:
         env:
           ORCA_BALANCE_UNIT_SHARDS: '1'
           ORCA_BACKGROUND_LAUNCH: '1'
+          MAX_WORKERS_ARG: ${{ inputs.runner == 'ubuntu-24.04-arm' && '--maxWorkers=4' || '' }}
         run: |
           ORCA_SHARD_SOURCE_SHA="$(git rev-parse HEAD)"
           export ORCA_SHARD_SOURCE_SHA
           node config/scripts/run-vitest.mjs run --config config/vitest.config.ts \
             --shard=${{ matrix.shard.index }}/${{ matrix.shard.count }} \
-            ${{ inputs.runner == 'ubuntu-24.04-arm' && '--maxWorkers=4' || '' }}
+            ${MAX_WORKERS_ARG:+"$MAX_WORKERS_ARG"}
 
       - name: Upload unit shard assignment
         if: always()

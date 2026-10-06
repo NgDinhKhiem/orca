@@ -374,18 +374,25 @@ jobs:
           path: ${{ runner.temp }}/relay-same-cap-shadow-gate
 
       - name: Seal exact successful canary authority
+        env:
+          TARGET_DIGEST: ${{ inputs.target-image-digest }}
+          ROLLBACK_DIGEST: ${{ inputs.rollback-image-digest }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DRAIN_PACE_WINDOW_MS: ${{ inputs.drain-pace-window-ms }}
+          SELECTOR_GENERATION: ${{ inputs.expected-selector-generation }}
+          REHOME_GENERATION: ${{ inputs.expected-rehome-generation }}
         run: |
           mkdir -p "${RUNNER_TEMP}/relay-same-cap-canary"
           node dev/scripts/relay-production-same-cap-wave.mjs create-canary \
             --cell-id "${{ fromJSON(needs.gate.outputs.cells)[0] }}" \
-            --target-digest "${{ inputs.target-image-digest }}" \
-            --rollback-digest "${{ inputs.rollback-image-digest }}" \
-            --confirmation "${{ inputs.confirmation }}" \
-            --drain-pace-window-ms "${{ inputs.drain-pace-window-ms }}" \
+            --target-digest "${TARGET_DIGEST}" \
+            --rollback-digest "${ROLLBACK_DIGEST}" \
+            --confirmation "${CONFIRMATION}" \
+            --drain-pace-window-ms "${DRAIN_PACE_WINDOW_MS}" \
             --shadow-report "${RUNNER_TEMP}/relay-same-cap-shadow-gate/relay-same-cap-shadow-gate-${{ fromJSON(needs.gate.outputs.cells)[0] }}-${GITHUB_RUN_ID}.json" \
             --commit-sha "${GITHUB_SHA}" --run-id "${GITHUB_RUN_ID}" \
-            --selector-generation "${{ inputs.expected-selector-generation }}" \
-            --rehome-generation "${{ inputs.expected-rehome-generation }}" \
+            --selector-generation "${SELECTOR_GENERATION}" \
+            --rehome-generation "${REHOME_GENERATION}" \
             > "${RUNNER_TEMP}/relay-same-cap-canary/authority.json"
 
       - uses: actions/upload-artifact@v4

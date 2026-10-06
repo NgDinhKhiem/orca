@@ -122,9 +122,10 @@ jobs:
       - name: Filter changed E2E specs
         id: e2e_filter
         if: github.event.pull_request.draft != true && steps.filter.outputs.should_run == 'true'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          BASE="${{ github.event.pull_request.base.sha }}"
           DIFF_BASE="$(node config/scripts/git-pull-request-diff-base.mjs "$BASE")"
           CHANGED="$(git diff --name-only --diff-filter=AMCR "$DIFF_BASE" HEAD)"
           # Source routes are executable contracts so a test can prove exact
@@ -246,13 +247,16 @@ jobs:
         env:
           PREFLIGHT_PHASE_SELECTED: ${{ needs.code_paths.outputs.static_analysis == 'true' }}
           PREFLIGHT_PRIOR_SUCCESS: ${{ job.status == 'success' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ "$PREFLIGHT_PHASE_SELECTED" != true ] || [ "$PREFLIGHT_PRIOR_SUCCESS" != true ]; then exit 0; fi
-          pnpm run check:code-quality:changed -- "${{ github.event.pull_request.base.sha }}"
+          pnpm run check:code-quality:changed -- "$BASE_SHA"
 
       - name: Enforce React Doctor on changed lines
         if: needs.code_paths.outputs.static_analysis == 'true'
-        run: pnpm run check:react-doctor:changed -- "${{ github.event.pull_request.base.sha }}"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: pnpm run check:react-doctor:changed -- "$BASE_SHA"
 
       - wait: changed-code-quality
 
