@@ -11,6 +11,7 @@ import {
   writeSecureJsonFile
 } from '../../shared/secure-file'
 import type { DeviceScope } from '../../shared/runtime-types'
+import { secretsMatch } from '../../shared/constant-time-secret-compare'
 import { removeStaleDurableWriteTempFiles } from '../durable-file-write'
 import { DEVICE_REGISTRY_FILENAME } from './mobile-pairing-files'
 import type { RelayDeviceBinding } from './relay/relay-revoke-outbox'
@@ -63,16 +64,25 @@ function validRelayBinding(value: unknown, deviceId: string): RelayDeviceBinding
 // paying a secure-file rewrite (two synchronous PowerShell ACL spawns on Windows) per connection.
 const LAST_SEEN_FLUSH_DELAY_MS = 250
 const STALE_WRITE_TEMP_AGE_MS = 24 * 60 * 60 * 1000
+// Why: a QR or pairing link that was screenshotted or screen-shared must not stay a live credential
+// indefinitely; an unscanned pending token stops authenticating after this and is replaced on next use.
+export const PENDING_DEVICE_TTL_MS = 15 * 60 * 1000
+
+export type DeviceRegistryOptions = {
+  now?: () => number
+}
 
 export class DeviceRegistry {
   private readonly registryPath: string
+  private readonly now: () => number
   private devices: DeviceEntry[] = []
   /** Set when the registry exists but could not be read, which makes `devices` a lie to save from. */
   private registryUnreadable = false
   private pendingLastSeenFlush: NodeJS.Timeout | null = null
 
-  constructor(userDataPath: string) {
+  constructor(userDataPath: string, options: DeviceRegistryOptions = {}) {
     this.registryPath = join(userDataPath, DEVICE_REGISTRY_FILENAME)
+    this.now = options.now ?? (() => Date.now())
     // Why: a write killed between writeFile and rename (e.g. a hung icacls, #20497) orphans its temp forever.
     void removeStaleDurableWriteTempFiles(this.registryPath, {
       minimumAgeMs: STALE_WRITE_TEMP_AGE_MS
@@ -99,7 +109,7 @@ export class DeviceRegistry {
       name,
       token: randomBytes(24).toString('hex'),
       scope,
-      pairedAt: Date.now(),
+      pairedAt: this.now(),
       lastSeenAt: 0,
       pairingReach
     }
@@ -122,6 +132,9 @@ export class DeviceRegistry {
     pairingReach: RuntimePairingReach = 'network'
   ): DeviceEntry {
     const existing = this.devices.find((d) => d.lastSeenAt === 0 && d.scope === scope)
+    if (existing && this.isPendingDeviceExpired(existing)) {
+      return this.rotatePendingDevice(name, scope, pairingReach)
+    }
     if (existing) {
       // Why: the same pending token can be re-advertised at a broader reach; widen it but never narrow it,
       // or a link already handed out for off-host use would stop being served after the next launch.
@@ -130,6 +143,11 @@ export class DeviceRegistry {
         : existing
     }
     return this.addDevice(name, scope, pairingReach)
+  }
+
+  /** True for a never-seen entry minted longer ago than the pending TTL; paired devices never expire. */
+  isPendingDeviceExpired(device: DeviceEntry): boolean {
+    return device.lastSeenAt === 0 && this.now() - device.pairedAt > PENDING_DEVICE_TTL_MS
   }
 
   private setPairingReach(existing: DeviceEntry, pairingReach: RuntimePairingReach): DeviceEntry {
@@ -242,7 +260,14 @@ export class DeviceRegistry {
   }
 
   validateToken(token: string): DeviceEntry | null {
-    return this.devices.find((d) => d.token === token) ?? null
+    let match: DeviceEntry | null = null
+    // Why: compare against every entry in constant time so response timing reveals neither prefix nor position.
+    for (const device of this.devices) {
+      if (secretsMatch(token, device.token) && match === null) {
+        match = device
+      }
+    }
+    return match && !this.isPendingDeviceExpired(match) ? match : null
   }
 
   updateLastSeen(deviceId: string): void {
@@ -252,7 +277,7 @@ export class DeviceRegistry {
     }
     // Why: persist before memory swap so a failed write cannot leave a scanned
     // device looking never-scanned on disk, where rotation would drop it.
-    const seenAt = Date.now()
+    const seenAt = this.now()
     const nextDevices = this.devices.map((device, candidateIndex) =>
       candidateIndex === index ? { ...device, lastSeenAt: seenAt } : device
     )
@@ -276,7 +301,7 @@ export class DeviceRegistry {
       this.updateLastSeen(deviceId)
       return
     }
-    const seenAt = Date.now()
+    const seenAt = this.now()
     this.devices = this.devices.map((device, candidateIndex) =>
       candidateIndex === index ? { ...device, lastSeenAt: seenAt } : device
     )

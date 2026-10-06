@@ -3,6 +3,7 @@ import { HOOK_REQUEST_SLOWLORIS_MS } from '../shared/agent-hook-listener/listene
 import { normalizeHookPayload } from '../shared/agent-hook-listener'
 import { mergeAgentHookRequestHeaders } from '../shared/agent-hook-listener/hook-envelope'
 import { readRequestBody } from '../shared/agent-hook-listener/request-body'
+import { secretsMatch } from '../shared/constant-time-secret-compare'
 import { resolveHookSource } from '../shared/agent-hook-listener/source-routing'
 import type { createHookTransportInterferenceTracker } from '../shared/agent-hook-transport-interference'
 import { isHookRequestTruncatedError } from '../shared/agent-hook-transport-interference'
@@ -38,7 +39,7 @@ export async function handleRelayHookRequest(
     res.end()
     return
   }
-  if (req.headers['x-orca-agent-hook-token'] !== options.token) {
+  if (!secretsMatch(req.headers['x-orca-agent-hook-token'], options.token)) {
     res.writeHead(403)
     res.end()
     return

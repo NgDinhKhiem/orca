@@ -4,6 +4,7 @@ import type { DaemonFileLog } from './daemon-file-log'
 import type { DaemonStreamDataBatcher } from './daemon-stream-data-batcher'
 import { createNdjsonParser, encodeNdjson } from './ndjson'
 import type { DaemonRequest, HelloMessage } from './types'
+import { secretsMatch } from '../../shared/constant-time-secret-compare'
 
 // Idle time before the first probe. How long the close then takes is the OS's probe schedule, not
 // ours, which is why the producer-stall watchdog never waits on it.
@@ -124,7 +125,7 @@ export class DaemonClientConnections {
       socket.destroy()
       return
     }
-    if (hello.token !== this.options.token) {
+    if (!secretsMatch(hello.token, this.options.token)) {
       this.options.log.log('client-hello-rejected', { reason: 'invalid-token', role: hello.role })
       socket.write(encodeNdjson({ type: 'hello', ok: false, error: 'Invalid token' }))
       socket.destroy()
