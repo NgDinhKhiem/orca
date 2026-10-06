@@ -18,6 +18,7 @@ it('preserves dismissal history after EIO', () => {
       notificationEpoch: 'epoch',
       notificationSeq: 1
     })
+    store.flush()
     const path = join(dir, 'mobile-notification-dismissals.json')
     const before = readFileSync(path, 'utf8')
     vi.mocked(readFileSync).mockImplementationOnce(() => {
@@ -30,6 +31,7 @@ it('preserves dismissal history after EIO', () => {
       notificationEpoch: 'epoch',
       notificationSeq: 2
     })
+    restarted.flush()
     expect(readFileSync(path, 'utf8')).toBe(before)
   } finally {
     vi.restoreAllMocks()

@@ -23,6 +23,8 @@ const alert = {
 it('reconciles an old delivered alert after desktop restart and preserves unrelated identities', () => {
   const h = fixture()
   h.store.record({ ...alert, ...shown })
+  // A desktop restart passes through the quit flush.
+  h.store.flush()
   const restarted = new MobileNotificationDismissalStore(h.path)
   restarted.record({
     type: 'dismiss',
@@ -30,6 +32,7 @@ it('reconciles an old delivered alert after desktop restart and preserves unrela
     notificationEpoch: 'new',
     notificationSeq: 1
   })
+  restarted.flush()
   const loaded = new MobileNotificationDismissalStore(h.path)
   expect(
     loaded.reconcile([
