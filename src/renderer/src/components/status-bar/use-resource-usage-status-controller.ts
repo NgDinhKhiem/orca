@@ -25,8 +25,12 @@ import {
 import { useResourceSessionInventory } from './use-resource-session-inventory'
 import { useResourceUsageActions } from './use-resource-usage-actions'
 import { useResourceUsageDerivedModel } from './use-resource-usage-derived-model'
+import {
+  resourceMemoryPollIntervalMs,
+  useResourceMemoryPolling
+} from './use-resource-memory-polling'
 
-const POLL_MS = 2_000
+const POLL_MS = resourceMemoryPollIntervalMs(navigator.userAgent)
 
 export function useResourceUsageStatusController() {
   const snapshot = useAppStore((s) => s.memorySnapshot)
@@ -166,20 +170,12 @@ export function useResourceUsageStatusController() {
   // Poll memory only while the popover is open. Session inventory is still
   // explicit-on-open/action/seed (not a closed interval) because full
   // listSessions can pause input with large preserved-session sets.
+  useResourceMemoryPolling({ open, fetchSnapshot, intervalMs: POLL_MS })
   useEffect(() => {
-    if (!open) {
-      return
+    if (open) {
+      void refreshSessions()
     }
-    void fetchSnapshot()
-    void refreshSessions()
-    // Why: only memory polls on an interval; session inventory is explicit on open/action since it's expensive with many terminals.
-    const memTimer = window.setInterval(() => {
-      void fetchSnapshot()
-    }, POLL_MS)
-    return () => {
-      window.clearInterval(memTimer)
-    }
-  }, [open, fetchSnapshot, refreshSessions])
+  }, [open, refreshSessions])
 
   useEffect(() => {
     if (!open) {
