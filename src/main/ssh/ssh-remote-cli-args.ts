@@ -9,9 +9,15 @@ import {
 const REPEATED_FLAG_SEPARATOR = '\u0000'
 const REPEATABLE_REMOTE_STRING_FLAGS = new Set(['label'])
 
-export function parseRemoteCliArgs(argv: string[]): ParsedRemoteCli {
+export type RemoteCliTokens = {
+  commandPath: string[]
+  /** Every flag occurrence in argv order, before repeat/last-wins folding. */
+  flagEntries: [string, string | boolean][]
+}
+
+export function tokenizeRemoteCliArgs(argv: readonly string[]): RemoteCliTokens {
   const commandPath: string[] = []
-  const flags = new Map<string, string | boolean>()
+  const flagEntries: [string, string | boolean][] = []
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i]
     if (!token.startsWith('--')) {
@@ -22,18 +28,28 @@ export function parseRemoteCliArgs(argv: string[]): ParsedRemoteCli {
     // Why: the SSH relay-backed shim should accept values beginning with `--` via `--flag=value`.
     const equalsIndex = assignment.indexOf('=')
     if (equalsIndex !== -1) {
-      setRemoteFlag(flags, assignment.slice(0, equalsIndex), assignment.slice(equalsIndex + 1))
+      flagEntries.push([assignment.slice(0, equalsIndex), assignment.slice(equalsIndex + 1)])
       continue
     }
 
     const flag = assignment
     const next = argv[i + 1]
-    if (!isRemoteBooleanFlag(flag, commandPath) && next && !next.startsWith('--')) {
-      setRemoteFlag(flags, flag, next)
+    // Why `!== undefined`: an empty argument is a value, as the host CLI parses it.
+    if (!isRemoteBooleanFlag(flag, commandPath) && next !== undefined && !next.startsWith('--')) {
+      flagEntries.push([flag, next])
       i += 1
     } else {
-      setRemoteFlag(flags, flag, true)
+      flagEntries.push([flag, true])
     }
+  }
+  return { commandPath, flagEntries }
+}
+
+export function parseRemoteCliArgs(argv: readonly string[]): ParsedRemoteCli {
+  const { commandPath, flagEntries } = tokenizeRemoteCliArgs(argv)
+  const flags = new Map<string, string | boolean>()
+  for (const [name, value] of flagEntries) {
+    setRemoteFlag(flags, name, value)
   }
   return { commandPath, flags }
 }

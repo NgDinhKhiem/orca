@@ -2,6 +2,9 @@ import type { RpcResponse } from '../runtime/rpc/core'
 import type { RpcDispatcher } from '../runtime/rpc/dispatcher'
 import { isLinearUuid } from '../../shared/linear/uuid'
 
+// Why: a body-file path would be read on the Orca client, not on the SSH host that named it.
+export const SSH_LINEAR_STDIN_BODY_ONLY = 'SSH Linear writes only support --body-file - for stdin.'
+
 type ParsedRemoteCli = {
   commandPath: string[]
   flags: Map<string, string | boolean>
@@ -78,10 +81,7 @@ export function readRemoteBody(
   if (hasBodyFile) {
     const path = requiredString(flags, 'body-file')
     if (path !== '-') {
-      throw new RemoteLinearWriteArgumentError(
-        'invalid_argument',
-        'SSH Linear writes only support --body-file - for stdin.'
-      )
+      throw new RemoteLinearWriteArgumentError('invalid_argument', SSH_LINEAR_STDIN_BODY_ONLY)
     }
     if (stdin === undefined) {
       throw new RemoteLinearWriteArgumentError(
