@@ -182,3 +182,18 @@ export function parseIpynb(content: string): ParsedIpynb {
     cells
   }
 }
+
+// Why: a source commit already knows the parse of the content it writes; handing it to the
+// viewer skips a second full parse and keeps unchanged cells' identity for memoized rows.
+let knownParse: { content: string; notebook: ParsedIpynb } | null = null
+
+export function rememberIpynbParse(content: string, notebook: ParsedIpynb): void {
+  knownParse = { content, notebook }
+}
+
+/** `parseIpynb`, reusing (once) a parse remembered for exactly this content. */
+export function parseIpynbReusingKnown(content: string): ParsedIpynb {
+  const known = knownParse
+  knownParse = null
+  return known?.content === content ? known.notebook : parseIpynb(content)
+}

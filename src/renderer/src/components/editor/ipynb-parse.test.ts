@@ -8,6 +8,7 @@ import {
   updateIpynbCellRun,
   updateIpynbCellSource,
   updateIpynbCellSources,
+  updateIpynbCellSourcesWithParse,
   withIpynbCellIds
 } from './ipynb-cell-mutations'
 import {
@@ -144,6 +145,45 @@ describe('ipynb parsing', () => {
     expect(updated.metadata).toEqual({ custom: true })
     expect(updated.cells[0].source).toEqual(['x = 41'])
     expect(updated.cells[1].source).toEqual(['print(x + 1)'])
+  })
+
+  it('derives the edited document parse without re-parsing, matching a full parse', () => {
+    const content = JSON.stringify({
+      nbformat: 4,
+      nbformat_minor: 5,
+      metadata: { language_info: { name: 'python' } },
+      cells: [
+        { cell_type: 'code', metadata: {}, execution_count: 2, outputs: [], source: ['a'] },
+        { cell_type: 'markdown', metadata: {}, source: ['# b'] }
+      ]
+    })
+    const previous = parseIpynb(content)
+    const next = updateIpynbCellSourcesWithParse(
+      content,
+      [{ index: 1, source: '# B\r\n\nmore\n' }],
+      previous
+    )
+    expect(next.notebook).toEqual(parseIpynb(next.content))
+    // The untouched cell keeps its identity so its row can skip re-rendering.
+    expect(next.notebook?.cells[0]).toBe(previous.cells[0])
+  })
+
+  it('declines to derive a parse when unknown cells shift raw and parsed indexes', () => {
+    const content = JSON.stringify({
+      nbformat: 4,
+      nbformat_minor: 5,
+      metadata: {},
+      cells: [
+        { cell_type: 'unknown', metadata: {}, source: [] },
+        { cell_type: 'code', metadata: {}, execution_count: null, outputs: [], source: [] }
+      ]
+    })
+    const next = updateIpynbCellSourcesWithParse(
+      content,
+      [{ index: 0, source: 'x' }],
+      parseIpynb(content)
+    )
+    expect(next.notebook).toBeNull()
   })
 
   it('inserts, deletes, and changes cell kinds', () => {
