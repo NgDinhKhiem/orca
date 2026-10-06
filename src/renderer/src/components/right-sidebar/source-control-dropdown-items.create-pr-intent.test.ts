@@ -144,7 +144,7 @@ describe('resolveDropdownItems Create PR intent', () => {
 
   it.each([
     ['azure-devops', 'Set ORCA_AZURE_DEVOPS_TOKEN in this environment'],
-    ['gitea', 'Set ORCA_GITEA_TOKEN in this environment']
+    ['gitea', 'Set ORCA_GITEA_TOKEN and ORCA_GITEA_API_BASE_URL in this environment']
   ] as const)('uses token auth copy when %s PR creation needs authentication', (provider, hint) => {
     const items = resolveDropdownItems(
       inputs({

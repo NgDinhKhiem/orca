@@ -13,31 +13,20 @@ import { readHostedPullRequestTemplate } from '../source-control/pull-request-te
 import { getGiteaPullRequestForBranch, invalidateGiteaPullRequestScanForRepo } from './client'
 import { mapGiteaPullRequest, type RawGiteaPullRequest } from './pull-request-mappers'
 import { getGiteaRepoRef, type GiteaRepoRef } from './repository-ref'
+import { getGiteaAuthConfig, giteaAuthHeadersForUrl, isGiteaTokenUsable } from './gitea-auth-config'
 
 const CREATE_REQUEST_TIMEOUT_MS = 60_000
-
-function envValue(name: string): string | null {
-  const value = process.env[name]?.trim() ?? ''
-  return value.length > 0 ? value : null
-}
-
-function normalizeApiBaseUrl(value: string): string {
-  const trimmed = value.trim().replace(/\/+$/, '')
-  return /\/api\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/api/v1`
-}
+const TOKEN_REQUIRED_ERROR =
+  'Create PR failed: Gitea is not authenticated. Next step: set ORCA_GITEA_TOKEN in this environment.'
+const BASE_URL_REQUIRED_ERROR =
+  'Create PR failed: Orca only sends ORCA_GITEA_TOKEN to the server in ORCA_GITEA_API_BASE_URL. Next step: set ORCA_GITEA_API_BASE_URL to your Gitea server URL in this environment.'
 
 function configuredApiBaseUrl(repo: GiteaRepoRef): string {
-  const configured = envValue('ORCA_GITEA_API_BASE_URL')
-  return configured ? normalizeApiBaseUrl(configured) : repo.apiBaseUrl
+  return getGiteaAuthConfig().apiBaseUrl ?? repo.apiBaseUrl
 }
 
 export function isGiteaReviewCreationAuthenticated(): boolean {
-  return envValue('ORCA_GITEA_TOKEN') !== null
-}
-
-function authHeaders(): Record<string, string> {
-  const token = envValue('ORCA_GITEA_TOKEN')
-  return token ? { Authorization: `token ${token}` } : {}
+  return isGiteaTokenUsable()
 }
 
 function apiUrl(repo: GiteaRepoRef, path: string): URL {
@@ -69,8 +58,7 @@ function classifyCreateError(error: unknown): CreateHostedReviewResult {
     return {
       ok: false,
       code: 'auth_required',
-      error:
-        'Create PR failed: Gitea is not authenticated. Next step: set ORCA_GITEA_TOKEN in this environment.'
+      error: TOKEN_REQUIRED_ERROR
     }
   }
   if (status === 409 || lower.includes('already exists') || lower.includes('already open')) {
@@ -172,15 +160,25 @@ export async function createGiteaPullRequest(
     ...(input.draft ? { draft: true } : {})
   }
 
+  const createUrl = apiUrl(repo, `/repos/${encodedRepoPath(repo)}/pulls`)
+  const authHeaders = giteaAuthHeadersForUrl(createUrl)
+  if (!authHeaders.Authorization) {
+    return {
+      ok: false,
+      code: 'auth_required',
+      error: getGiteaAuthConfig().token ? BASE_URL_REQUIRED_ERROR : TOKEN_REQUIRED_ERROR
+    }
+  }
+
   try {
     const raw = await requestHostedReviewJson<RawGiteaPullRequest>(
-      apiUrl(repo, `/repos/${encodedRepoPath(repo)}/pulls`),
+      createUrl,
       {
         method: 'POST',
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
-          ...authHeaders()
+          ...authHeaders
         },
         body: JSON.stringify(requestBody)
       },

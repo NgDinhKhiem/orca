@@ -14,6 +14,7 @@ import {
   type HostedReviewExecutionOptions
 } from '../source-control/hosted-review-git-options'
 import { cancelUnreadResponseBody } from '../lib/unread-response-body'
+import { getGiteaAuthConfig, giteaAuthHeadersForUrl } from './gitea-auth-config'
 
 const REQUEST_TIMEOUT_MS = 5000
 // Why: self-hosted Forgejo can take ~5s to serve one /pulls page (it loads
@@ -22,11 +23,6 @@ const REQUEST_TIMEOUT_MS = 5000
 const PULL_REQUEST_LIST_TIMEOUT_MS = 15_000
 const PULL_REQUEST_PAGE_LIMIT = 50
 const MAX_PULL_REQUEST_PAGES = 5
-
-type GiteaAuthConfig = {
-  apiBaseUrl: string | null
-  token: string | null
-}
 
 export type GiteaAuthStatus = {
   configured: boolean
@@ -41,30 +37,8 @@ type RequestOptions = {
   timeoutMs?: number
 }
 
-function envValue(name: string): string | null {
-  const value = process.env[name]?.trim() ?? ''
-  return value.length > 0 ? value : null
-}
-
-export function normalizeGiteaApiBaseUrl(value: string): string {
-  const trimmed = value.trim().replace(/\/+$/, '')
-  return /\/api\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/api/v1`
-}
-
-function getAuthConfig(): GiteaAuthConfig {
-  const apiBaseUrl = envValue('ORCA_GITEA_API_BASE_URL')
-  return {
-    apiBaseUrl: apiBaseUrl ? normalizeGiteaApiBaseUrl(apiBaseUrl) : null,
-    token: envValue('ORCA_GITEA_TOKEN')
-  }
-}
-
-function authHeaders(config: Pick<GiteaAuthConfig, 'token'>): Record<string, string> {
-  return config.token ? { Authorization: `token ${config.token}` } : {}
-}
-
 function configuredApiBaseUrl(repo: GiteaRepoRef): string {
-  return getAuthConfig().apiBaseUrl ?? repo.apiBaseUrl
+  return getGiteaAuthConfig().apiBaseUrl ?? repo.apiBaseUrl
 }
 
 function apiUrl(baseUrl: string, path: string, searchParams?: RequestOptions['searchParams']): URL {
@@ -86,12 +60,12 @@ async function requestJsonAtBase<T>(
   // throws instead of collapsing to null so callers never report false not_found.
   throwOnFailure = false
 ): Promise<T | null> {
-  const config = getAuthConfig()
   try {
-    const response = await fetch(apiUrl(baseUrl, path, options.searchParams), {
+    const url = apiUrl(baseUrl, path, options.searchParams)
+    const response = await fetch(url, {
       headers: {
         Accept: 'application/json',
-        ...authHeaders(config)
+        ...giteaAuthHeadersForUrl(url)
       },
       signal: AbortSignal.timeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS)
     })
@@ -168,7 +142,7 @@ function matchesBranch(raw: RawGiteaPullRequest, branchName: string): boolean {
 }
 
 export async function getGiteaAuthStatus(): Promise<GiteaAuthStatus> {
-  const config = getAuthConfig()
+  const config = getGiteaAuthConfig()
   const tokenConfigured = config.token !== null
   if (!config.apiBaseUrl && !tokenConfigured) {
     return {
@@ -180,9 +154,11 @@ export async function getGiteaAuthStatus(): Promise<GiteaAuthStatus> {
     }
   }
   if (!config.apiBaseUrl) {
+    // Why: the token only goes to the configured base URL's origin, so without
+    // one it authenticates nothing; public repos still work unauthenticated.
     return {
       configured: true,
-      authenticated: true,
+      authenticated: false,
       account: null,
       baseUrl: null,
       tokenConfigured

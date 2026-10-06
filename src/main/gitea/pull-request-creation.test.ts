@@ -25,7 +25,11 @@ const OLD_FETCH = globalThis.fetch
 
 describe('Gitea pull request creation', () => {
   beforeEach(() => {
-    process.env = { ...OLD_ENV, ORCA_GITEA_TOKEN: 'gitea-token' }
+    process.env = {
+      ...OLD_ENV,
+      ORCA_GITEA_TOKEN: 'gitea-token',
+      ORCA_GITEA_API_BASE_URL: 'https://git.example.com/code'
+    }
     gitExecFileAsyncMock.mockReset()
     getSshGitProviderMock.mockReset()
     gitExecFileAsyncMock.mockResolvedValue({
@@ -45,6 +49,36 @@ describe('Gitea pull request creation', () => {
     expect(isGiteaReviewCreationAuthenticated()).toBe(true)
     delete process.env.ORCA_GITEA_TOKEN
     expect(isGiteaReviewCreationAuthenticated()).toBe(false)
+  })
+
+  it('treats a token without a configured API base URL as unusable for creation', () => {
+    delete process.env.ORCA_GITEA_API_BASE_URL
+    expect(isGiteaReviewCreationAuthenticated()).toBe(false)
+  })
+
+  it('never sends the token to a remote-derived host when no API base URL is configured', async () => {
+    delete process.env.ORCA_GITEA_API_BASE_URL
+    gitExecFileAsyncMock.mockResolvedValue({
+      stdout: 'https://attacker.example.net/team/repo.git\n',
+      stderr: ''
+    })
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(new Headers(init?.headers).has('Authorization')).toBe(false)
+      return Response.json({ message: 'Unauthorized' }, { status: 401 })
+    })
+    globalThis.fetch = fetchMock as never
+
+    const result = await createGiteaPullRequest(
+      '/repo',
+      { provider: 'gitea', base: 'main', head: 'feature/gitea', title: 'Add Gitea create' },
+      'local'
+    )
+
+    expect(result).toMatchObject({ ok: false, code: 'auth_required' })
+    expect(result.ok ? '' : result.error).toContain('ORCA_GITEA_API_BASE_URL')
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(new Headers(init?.headers).has('Authorization')).toBe(false)
+    }
   })
 
   it('posts a pull request create body to the repository REST endpoint', async () => {

@@ -77,6 +77,44 @@ export function azureDevOpsTokenConfigured(config: AzureDevOpsAuthConfig): boole
   return Boolean(config.pat || config.accessToken)
 }
 
+function parseUrl(value: string | URL): URL | null {
+  try {
+    return new URL(value)
+  } catch {
+    return null
+  }
+}
+
+/** Azure DevOps Services hosts, or the configured base URL's exact origin. */
+export function isAzureDevOpsCredentialAllowedForUrl(
+  requestUrl: string | URL,
+  configuredApiBaseUrl: string | null = getAzureDevOpsAuthConfig().apiBaseUrl
+): boolean {
+  const url = parseUrl(requestUrl)
+  if (!url) {
+    return false
+  }
+  // Why: any http(s) remote with `/_git/` parses as Azure DevOps Server, so a
+  // remote-derived host is untrusted unless the user named it in the base URL.
+  const configured = configuredApiBaseUrl ? parseUrl(configuredApiBaseUrl) : null
+  if (configured && configured.origin === url.origin) {
+    return true
+  }
+  const host = url.hostname.toLowerCase()
+  return (
+    url.protocol === 'https:' && (host === 'dev.azure.com' || host.endsWith('.visualstudio.com'))
+  )
+}
+
+export function azureDevOpsAuthHeadersForUrl(
+  requestUrl: string | URL,
+  config: AzureDevOpsAuthConfig = getAzureDevOpsAuthConfig()
+): Record<string, string> {
+  return isAzureDevOpsCredentialAllowedForUrl(requestUrl, config.apiBaseUrl)
+    ? authHeaders(config)
+    : {}
+}
+
 function authHeaders(config: AzureDevOpsAuthConfig): Record<string, string> {
   if (config.accessToken) {
     return { Authorization: `Bearer ${config.accessToken}` }
@@ -160,7 +198,7 @@ export async function requestAzureDevOpsJsonAtBase<T>(
     fetch(url, {
       headers: {
         Accept: 'application/json',
-        ...authHeaders(config)
+        ...azureDevOpsAuthHeadersForUrl(url, config)
       },
       signal: AbortSignal.timeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS)
     })
