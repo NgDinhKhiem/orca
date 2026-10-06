@@ -165,7 +165,7 @@ test('production mutations pass the minted admin token to live preflight', async
 
 test('fence broker pins the production-proven Terraform planner', async () => {
   const dockerfile = await source('apps/relay-fence-broker/Dockerfile')
-  assert.match(dockerfile, /FROM hashicorp\/terraform:1\.15\.8 AS terraform/)
+  assert.match(dockerfile, /FROM hashicorp\/terraform:1\.15\.8@sha256:[a-f0-9]{64} AS terraform/)
 })
 
  test('push uses its dedicated identity and rollout lease', () => {
