@@ -357,6 +357,21 @@ describe('SshRelaySession rejected PTY delivery recovery', () => {
     expect(internals.rejectedPtyRecoveryAttempts).toHaveLength(0)
   })
 
+  it('forgets the accepted source identity when the PTY exits', async () => {
+    const { internals } = prepareSession()
+    await internals.acceptPtyData(rejectedPayload({ data: 'live', sourceRejected: undefined }))
+    expect(internals.sourceIdentityByRelayPtyId.has('pty-bad')).toBe(true)
+
+    internals.retireExitedPty({
+      id: 'ssh:target-1@@pty-bad',
+      code: 0,
+      providerGeneration: 23,
+      ptyIncarnation: 'incarnation-bad'
+    })
+
+    expect(internals.sourceIdentityByRelayPtyId.has('pty-bad')).toBe(false)
+  })
+
   // Why a channel drop rather than a terminal relay error: a terminal error clears the reconnect
   // backoff and rotates provider authority, aborting every fs and git request on the target, so one
   // PTY's undeliverable output would strand the whole connection in manual recovery.
