@@ -74,8 +74,8 @@ jobs:
             ~/Library/Caches/electron
             ~/Library/Caches/electron-builder
           key: electron-builder-mac-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            electron-builder-mac-
+          # Why no restore-keys: this job signs, and adhoc/daily/hourly builds write the
+          # same prefix in main's cache scope. Exact-key hits only; a miss downloads fresh.
 
       # Why: pnpm install triggers electron's postinstall, which downloads the
       # Electron binary from GitHub release assets. GitHub's download CDN

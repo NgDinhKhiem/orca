@@ -1366,8 +1366,8 @@ jobs:
         with:
           path: ${{ matrix.eb_cache_path }}
           key: electron-builder-${{ matrix.platform }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            electron-builder-${{ matrix.platform }}-
+          # Why no restore-keys: this job signs, and other main-scope workflows write the
+          # same prefix. Exact-key hits only; a miss downloads fresh.
 
       # PRs cache tools separately from Electron; identical paths preserve their cache version.
       - name: Seed shared Linux packaging downloads

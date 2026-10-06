@@ -299,9 +299,9 @@ describe('CI dependency download caches', () => {
     // Cache versions include the path list, so matching key strings alone cannot prove reuse.
     expect(restore.with.path).toBe(windows.eb_cache_path)
     expect(restore.with.key).toBe(save.with.key.replace('${{ matrix.platform }}', 'win'))
-    expect(restore.with['restore-keys']).toBe(
-      save.with['restore-keys'].replace('${{ matrix.platform }}', 'win')
-    )
+    // The signing release job restores exact keys only; PR packaging keeps its prefix fallback.
+    expect(save.with['restore-keys']).toBeUndefined()
+    expect(restore.with['restore-keys'].trim()).toBe('electron-builder-win-')
     expect(save.uses).toBe('actions/cache@v5')
     expect(save.with.path).toBe('${{ matrix.eb_cache_path }}')
     for (const name of ['dev-channel-win-build', 'windows-signing-rehearsal']) {
