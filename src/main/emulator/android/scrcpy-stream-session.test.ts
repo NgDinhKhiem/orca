@@ -170,3 +170,23 @@ describe('ScrcpyStreamSession video buffering', () => {
     expect(concatenatedBytes).toBeLessThanOrEqual(frame.length * 2)
   })
 })
+
+describe('ScrcpyStreamSession server log capture', () => {
+  it('keeps only the log prefix it reports and stops decoding once that is full', async () => {
+    const { emulatorProbe } = await import('../emulator-probe')
+    const { server, callbacks, started } = await startSession()
+    const decoded = vi.fn(() => 'scrcpy server log line\n'.repeat(500))
+    for (let index = 0; index < 200; index += 1) {
+      server.stdout.emit('data', { toString: decoded })
+    }
+    // Long-running servers log continuously; only the first 1000 chars are ever reported.
+    expect(decoded.mock.calls.length).toBeLessThanOrEqual(1)
+    server.emit('exit', 1)
+    expect(vi.mocked(emulatorProbe)).toHaveBeenCalledWith('scrcpy.server.exit', {
+      code: 1,
+      log: 'scrcpy server log line\n'.repeat(500).slice(0, 1000).trim()
+    })
+    expect(callbacks.onError).toHaveBeenCalled()
+    await expect(started).rejects.toThrow('scrcpy server exited before the video stream started')
+  })
+})
