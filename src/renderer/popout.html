@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <title>Orca Agent Dashboard</title>
-    <!-- CSP is relaxed during development; electron-vite injects a stricter policy for production builds -->
+    <!-- Production builds get their CSP from config/build-plugins/renderer-content-security-policy.ts; dev has none so HMR works -->
   </head>
 
   <body>

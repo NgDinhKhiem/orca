@@ -28,6 +28,9 @@ type PluginPanelEntryState =
   | { status: 'unresponsive' }
   | { status: 'ready'; shellHtml: string; documentRevision: number }
 
+/** Desktop frame source: a published URL, or the publish failure for that frame. */
+type PublishedPanelFrame = { frameKey: string; url: string } | { frameKey: string; failed: true }
+
 function PluginPanelMessage({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
@@ -54,6 +57,10 @@ function PluginPanel({ tabKey }: PluginPanelProps): React.JSX.Element {
   const [entryState, setEntryState] = useState<PluginPanelEntryState>({ status: 'loading' })
   const [sessionToken, setSessionToken] = useState<string | null>(null)
   const [loadedFrameKey, setLoadedFrameKey] = useState<string | null>(null)
+  const [publishedFrame, setPublishedFrame] = useState<PublishedPanelFrame | null>(null)
+  // Why: desktop serves panels from a URL with its own CSP; a srcdoc frame would inherit the
+  // app's script-src 'self' and block the shell. The web client has no such URL and keeps srcdoc.
+  const servesPanelFromUrl = Boolean(window.api?.plugins?.publishPanelDocument)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const themeRevision = usePluginPanelThemeRevision()
 
@@ -98,6 +105,38 @@ function PluginPanel({ tabKey }: PluginPanelProps): React.JSX.Element {
       window.removeEventListener('message', handler)
     }
   }, [panelDocument, sessionToken, watchdog])
+
+  useEffect(() => {
+    const pluginsApi = window.api?.plugins
+    const publishPanelDocument = pluginsApi?.publishPanelDocument
+    if (!panelFrameKey || !panelDocument || !publishPanelDocument) {
+      return
+    }
+    let active = true
+    let publishedUrl: string | null = null
+    publishPanelDocument(panelDocument).then(
+      (url) => {
+        if (!active) {
+          void pluginsApi.releasePanelDocument?.(url)
+          return
+        }
+        publishedUrl = url
+        setPublishedFrame({ frameKey: panelFrameKey, url })
+      },
+      () => {
+        if (active) {
+          setPanelHealth(tabKey, 'error')
+          setPublishedFrame({ frameKey: panelFrameKey, failed: true })
+        }
+      }
+    )
+    return () => {
+      active = false
+      if (publishedUrl) {
+        void pluginsApi.releasePanelDocument?.(publishedUrl)
+      }
+    }
+  }, [panelDocument, panelFrameKey, setPanelHealth, tabKey])
 
   useEffect(() => {
     if (!panelFrameKey || loadedFrameKey !== panelFrameKey) {
@@ -205,7 +244,12 @@ function PluginPanel({ tabKey }: PluginPanelProps): React.JSX.Element {
     )
   }
 
-  if (entryState.status === 'error') {
+  const currentPublishedFrame =
+    servesPanelFromUrl && publishedFrame?.frameKey === panelFrameKey ? publishedFrame : null
+  if (
+    entryState.status === 'error' ||
+    (currentPublishedFrame && 'failed' in currentPublishedFrame)
+  ) {
     return (
       <PluginPanelMessage>
         {translate(
@@ -216,16 +260,26 @@ function PluginPanel({ tabKey }: PluginPanelProps): React.JSX.Element {
     )
   }
 
+  if (servesPanelFromUrl && !currentPublishedFrame) {
+    return (
+      <PluginPanelMessage>
+        {translate('auto.components.right.sidebar.PluginPanel.loading', 'Loading plugin panel...')}
+      </PluginPanelMessage>
+    )
+  }
+
   return (
     <iframe
       key={panelFrameKey}
       ref={iframeRef}
       // SECURITY: never add allow-same-origin — the srcdoc frame must stay an
       // opaque origin so plugin UI cannot reach the app DOM, storage, or IPC.
-      // The srcdoc itself is the host CSP shell wrapped around plugin HTML.
+      // The document itself is the host CSP shell wrapped around plugin HTML.
       sandbox="allow-scripts"
       name={`${PLUGIN_PANEL_FRAME_NAME_PREFIX}${tabKey}`}
-      srcDoc={panelDocument ?? ''}
+      {...(currentPublishedFrame && 'url' in currentPublishedFrame
+        ? { src: currentPublishedFrame.url }
+        : { srcDoc: panelDocument ?? '' })}
       onLoad={() => setLoadedFrameKey(panelFrameKey)}
       title={panel.title}
       className="h-full w-full flex-1 border-0 bg-background"

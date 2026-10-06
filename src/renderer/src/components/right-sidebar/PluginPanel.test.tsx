@@ -133,6 +133,69 @@ describe('PluginPanel', () => {
     expect(initialIframe?.getAttribute('sandbox')).toBe('allow-scripts')
   })
 
+  it('loads the panel from a published desktop URL so the app CSP is not inherited', async () => {
+    const publishPanelDocumentMock = vi
+      .fn()
+      .mockResolvedValueOnce('orca-plugin-panel://document/first')
+      .mockResolvedValueOnce('orca-plugin-panel://document/second')
+    const releasePanelDocumentMock = vi.fn().mockResolvedValue(undefined)
+    Object.assign(window.api.plugins, {
+      publishPanelDocument: publishPanelDocumentMock,
+      releasePanelDocument: releasePanelDocumentMock
+    })
+    readPanelEntryMock.mockResolvedValue({
+      html: '<h1>Hello plugin</h1>',
+      sessionToken: SESSION_TOKEN
+    })
+
+    await renderPanel('plugin:orca-samples.my-plugin/dashboard')
+
+    const iframe = container.querySelector('iframe')
+    expect(publishPanelDocumentMock).toHaveBeenCalledWith(
+      expect.stringContaining('<h1>Hello plugin</h1>')
+    )
+    expect(iframe?.getAttribute('src')).toBe('orca-plugin-panel://document/first')
+    expect(iframe?.hasAttribute('srcdoc')).toBe(false)
+    expect(iframe?.getAttribute('sandbox')).toBe('allow-scripts')
+
+    readPanelEntryMock.mockResolvedValue({
+      html: '<h1>Reloaded plugin</h1>',
+      sessionToken: SESSION_TOKEN
+    })
+    await act(async () => {
+      pluginChangedListener?.()
+    })
+    expect(container.querySelector('iframe')?.getAttribute('src')).toBe(
+      'orca-plugin-panel://document/second'
+    )
+    expect(releasePanelDocumentMock).toHaveBeenCalledWith('orca-plugin-panel://document/first')
+
+    await act(async () => {
+      root.render(null)
+    })
+    expect(releasePanelDocumentMock).toHaveBeenCalledWith('orca-plugin-panel://document/second')
+  })
+
+  it('shows the error state when the desktop panel URL cannot be published', async () => {
+    Object.assign(window.api.plugins, {
+      publishPanelDocument: vi.fn().mockRejectedValue(new Error('ipc down')),
+      releasePanelDocument: vi.fn()
+    })
+    readPanelEntryMock.mockResolvedValue({
+      html: '<h1>Hello plugin</h1>',
+      sessionToken: SESSION_TOKEN
+    })
+
+    await renderPanel('plugin:orca-samples.my-plugin/dashboard')
+
+    expect(container.querySelector('iframe')).toBeNull()
+    expect(container.textContent).toContain('The plugin panel could not be loaded.')
+    expect(setPanelHealthMock).toHaveBeenLastCalledWith(
+      'plugin:orca-samples.my-plugin/dashboard',
+      'error'
+    )
+  })
+
   it('restarts the watchdog after a dev reload replaces the panel document', async () => {
     readPanelEntryMock.mockResolvedValue({
       html: '<h1>Hello plugin</h1>',

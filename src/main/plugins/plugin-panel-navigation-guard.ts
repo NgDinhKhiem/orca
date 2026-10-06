@@ -1,7 +1,13 @@
 import type { WebContents, WebFrameMain } from 'electron'
 import { PLUGIN_PANEL_FRAME_NAME_PREFIX } from '../../shared/plugins/plugin-panel-bridge'
+import { parsePluginPanelDocumentId } from '../../shared/plugins/plugin-panel-document-url'
 
 type NavigationFrame = Pick<WebFrameMain, 'frameTreeNodeId' | 'isDestroyed' | 'name'>
+
+/** The host-provided first document: srcdoc on the web client, a published URL on desktop. */
+function isInitialPanelDocumentUrl(url: string): boolean {
+  return url === 'about:srcdoc' || parsePluginPanelDocumentId(url) !== null
+}
 
 type RegisteredFrame = {
   frame: NavigationFrame
@@ -28,9 +34,9 @@ export class PluginPanelNavigationRegistry {
     this.prune()
     const registeredTarget = frame ? this.frames.get(frame.frameTreeNodeId) : undefined
     if (registeredTarget) {
-      // Why: registration happens before the host-provided srcdoc commits;
+      // Why: registration happens before the host-provided document commits;
       // allow exactly that initial document, then contain every navigation.
-      if (registeredTarget.initialSrcdocPending && destinationUrl === 'about:srcdoc') {
+      if (registeredTarget.initialSrcdocPending && isInitialPanelDocumentUrl(destinationUrl)) {
         registeredTarget.initialSrcdocPending = false
         return false
       }
@@ -60,7 +66,7 @@ export function registerPluginPanelNavigationGuard(webContents: WebContents): vo
     }
   })
   webContents.on('did-start-navigation', (event) => {
-    if (!event.isMainFrame && event.url === 'about:srcdoc' && event.frame) {
+    if (!event.isMainFrame && isInitialPanelDocumentUrl(event.url) && event.frame) {
       // Some Chromium builds populate the frame name only when navigation
       // starts; this event still precedes document parsing and plugin code.
       registry.register(event.frame)

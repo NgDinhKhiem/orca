@@ -150,6 +150,9 @@ export type PluginsApi = {
   /** Returns the panel's CSP-wrapped HTML, or null when the plugin or
    *  panel is missing/disabled. Rendered only inside a sandboxed iframe. */
   readPanelEntry: (args: { pluginKey: string; panelId: string }) => Promise<PluginPanelEntry | null>
+  /** Desktop only: serves a filled panel document from its own CSP-bearing URL. */
+  publishPanelDocument?: (html: string) => Promise<string>
+  releasePanelDocument?: (url: string) => Promise<void>
   invokeCommand: (args: {
     pluginKey: string
     commandId: string
