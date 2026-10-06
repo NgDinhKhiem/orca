@@ -606,6 +606,11 @@ export class PtyHandler {
 
   setConsumerDeliveryPaused(id: string, paused: boolean): void {
     if (paused) {
+      const managed = this.ptys.get(id)
+      // Why: exit teardown already cleared this id; a pause for an unknown or exiting PTY would never be cleared again.
+      if (!managed || managed.disposed) {
+        return
+      }
       this.consumerPausedOutputPtys.add(id)
       this.pausePtyOutput(id)
       return
