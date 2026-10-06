@@ -9,6 +9,33 @@ export const interactiveOutputCharsByPty = new Map<string, number>()
 export const activeRendererPtys = new Set<string>()
 export const visibleRendererPtys = new Set<string>()
 export const rendererVisibilityKnownPtys = new Set<string>()
+// Why: a renderer visibility/active report can still be in flight when its PTY exits; teardown
+// has already cleared the sets above, so applying the late report would re-add a dead id for good.
+// Timestamps, not timers: exit must not leave a timer behind. Insertion order is exit order,
+// so expired tombstones are always at the head and pruning stays O(1) amortized.
+const RENDERER_PTY_EXIT_TOMBSTONE_MS = 30_000
+const exitedRendererPtyTombstones = new Map<string, number>()
+
+function pruneExpiredRendererPtyTombstones(now: number): void {
+  for (const [id, exitedAt] of exitedRendererPtyTombstones) {
+    if (now - exitedAt < RENDERER_PTY_EXIT_TOMBSTONE_MS) {
+      return
+    }
+    exitedRendererPtyTombstones.delete(id)
+  }
+}
+
+export function markRendererPtyExited(id: string): void {
+  const now = Date.now()
+  pruneExpiredRendererPtyTombstones(now)
+  exitedRendererPtyTombstones.delete(id)
+  exitedRendererPtyTombstones.set(id, now)
+}
+
+export function isRendererPtyRecentlyExited(id: string): boolean {
+  pruneExpiredRendererPtyTombstones(Date.now())
+  return exitedRendererPtyTombstones.has(id)
+}
 // Why null-init + wrapper fns: see debug.ts — rolldown const-folds `export let fn = noop` bridges (STA-5661).
 let invalidatePendingPtyDrainPriorityImpl: ((id?: string, schedule?: boolean) => void) | null = null
 let invalidatePendingPtyDrainPolicyImpl: ((id?: string, schedule?: boolean) => void) | null = null
