@@ -22,8 +22,18 @@ import { syncFederatedDispatch } from './orchestration/federation-sync'
 import type { OrchestrationDb } from './orchestration/db'
 import type { OrcaRuntimeService } from './orca-runtime'
 
+const FEDERATION_PULL_INTERVAL_MS = 1_000
+const FEDERATION_PULL_MAX_BACKOFF_MS = 30_000
+
+/** One poll loop per worker environment, covering every dispatch relayed through it. */
+type EnvironmentRelay = {
+  dispatchIds: Set<string>
+  failedPulls: number
+  timer: ReturnType<typeof setTimeout> | null
+}
+
 export class RuntimeOrchestrationFederation {
-  private readonly timers = new Map<string, ReturnType<typeof setInterval>>()
+  private readonly relays = new Map<string, EnvironmentRelay>()
   private readonly syncs = new Map<string, { db: OrchestrationDb; promise: Promise<void> }>()
   private readonly warnings = new Set<string>()
   private terminalRecoveryTimer: ReturnType<typeof setTimeout> | null = null
@@ -38,10 +48,7 @@ export class RuntimeOrchestrationFederation {
 
   resetForDatabaseChange(): void {
     this.relayGeneration += 1
-    for (const timer of this.timers.values()) {
-      clearInterval(timer)
-    }
-    this.timers.clear()
+    this.clearRelays()
     if (this.terminalRecoveryTimer) {
       clearTimeout(this.terminalRecoveryTimer)
     }
@@ -172,28 +179,74 @@ export class RuntimeOrchestrationFederation {
       return
     }
     for (const dispatch of this.runtime.getOrchestrationDb().listActiveFederatedDispatches(runId)) {
-      if (this.timers.has(dispatch.dispatch_id)) {
+      let relay = this.relays.get(dispatch.environment_id)
+      if (relay?.dispatchIds.has(dispatch.dispatch_id)) {
         continue
       }
-      const tick = () => {
-        const db = this.runtime.getOrchestrationDb()
-        if (!db.isFederatedDispatchRelayEligible(dispatch.dispatch_id)) {
-          const activeTimer = this.timers.get(dispatch.dispatch_id)
-          if (activeTimer) {
-            clearInterval(activeTimer)
-          }
-          this.timers.delete(dispatch.dispatch_id)
-          this.warnings.delete(dispatch.dispatch_id)
-          return
-        }
-        void this.syncDispatch(dispatch.dispatch_id).catch(() => undefined)
+      if (!relay) {
+        relay = { dispatchIds: new Set(), failedPulls: 0, timer: null }
+        this.relays.set(dispatch.environment_id, relay)
+        this.scheduleEnvironmentPull(dispatch.environment_id, relay, FEDERATION_PULL_INTERVAL_MS)
       }
-      const timer = setInterval(tick, 1_000)
-      timer.unref?.()
-      this.timers.set(dispatch.dispatch_id, timer)
-      tick()
+      relay.dispatchIds.add(dispatch.dispatch_id)
+      // A newly relayed dispatch is pulled now, as before, not on the environment's next tick.
+      void this.syncDispatch(dispatch.dispatch_id).catch(() => undefined)
     }
     this.ensureTerminalHistoryRecovery()
+  }
+
+  private scheduleEnvironmentPull(
+    environmentId: string,
+    relay: EnvironmentRelay,
+    delayMs: number
+  ): void {
+    relay.timer = setTimeout(() => {
+      relay.timer = null
+      void this.pullEnvironment(environmentId, relay)
+    }, delayMs)
+    relay.timer.unref?.()
+  }
+
+  private async pullEnvironment(environmentId: string, relay: EnvironmentRelay): Promise<void> {
+    const db = this.runtime.getOrchestrationDb()
+    for (const dispatchId of relay.dispatchIds) {
+      if (!db.isFederatedDispatchRelayEligible(dispatchId)) {
+        relay.dispatchIds.delete(dispatchId)
+        this.warnings.delete(dispatchId)
+      }
+    }
+    if (relay.dispatchIds.size === 0) {
+      this.relays.delete(environmentId)
+      return
+    }
+    const results = await Promise.allSettled(
+      [...relay.dispatchIds].map((dispatchId) => this.syncDispatch(dispatchId))
+    )
+    if (this.relays.get(environmentId) !== relay) {
+      return
+    }
+    // Why: a pull that fails for every dispatch means the environment is unreachable;
+    // retrying it every second only adds load, so back off until one pull succeeds.
+    relay.failedPulls = results.some((result) => result.status === 'fulfilled')
+      ? 0
+      : relay.failedPulls + 1
+    const delayMs =
+      relay.failedPulls === 0
+        ? FEDERATION_PULL_INTERVAL_MS
+        : Math.min(
+            FEDERATION_PULL_INTERVAL_MS * 2 ** (relay.failedPulls - 1),
+            FEDERATION_PULL_MAX_BACKOFF_MS
+          )
+    this.scheduleEnvironmentPull(environmentId, relay, delayMs)
+  }
+
+  private clearRelays(): void {
+    for (const relay of this.relays.values()) {
+      if (relay.timer) {
+        clearTimeout(relay.timer)
+      }
+    }
+    this.relays.clear()
   }
 
   private ensureTerminalHistoryRecovery(): void {
@@ -240,10 +293,7 @@ export class RuntimeOrchestrationFederation {
 
   stopRelay(): void {
     this.relayGeneration += 1
-    for (const timer of this.timers.values()) {
-      clearInterval(timer)
-    }
-    this.timers.clear()
+    this.clearRelays()
     this.warnings.clear()
     this.syncs.clear()
     if (this.terminalRecoveryTimer) {
