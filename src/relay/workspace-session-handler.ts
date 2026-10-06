@@ -1,16 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import type { RelayDispatcher } from './dispatcher'
 import { publishWorkspaceSnapshotChange } from './workspace-snapshot-publication'
-
-type RemoteWorkspaceSnapshot = {
-  namespace: string
-  revision: number
-  updatedAt: number
-  schemaVersion: number
-  session: Record<string, unknown>
-}
+import {
+  SNAPSHOT_SCHEMA_VERSION,
+  WorkspaceSessionSnapshotStore,
+  type RemoteWorkspaceSnapshot
+} from './workspace-session-snapshot-store'
 
 type ConnectedClient = {
   clientId: string
@@ -27,18 +24,7 @@ type PatchResult =
       message?: string
     }
 
-const SNAPSHOT_SCHEMA_VERSION = 1
 const PRESENCE_TTL_MS = 45_000
-
-function emptySession(): Record<string, unknown> {
-  return {
-    activeRepoId: null,
-    activeWorktreeId: null,
-    activeTabId: null,
-    tabsByWorktree: {},
-    terminalLayoutsByTabId: {}
-  }
-}
 
 function sanitizeNamespace(namespace: unknown): string {
   const raw = typeof namespace === 'string' && namespace.trim() ? namespace.trim() : 'default'
@@ -55,79 +41,38 @@ function sanitizeClientId(value: string): string {
 
 export class WorkspaceSessionHandler {
   private readonly clientsByNamespace = new Map<string, Map<string, ConnectedClient>>()
+  private readonly snapshots: WorkspaceSessionSnapshotStore
 
   constructor(
     private dispatcher: RelayDispatcher,
-    private baseDir = join(homedir(), '.orca', 'sessions')
+    baseDir = join(homedir(), '.orca', 'sessions')
   ) {
+    this.snapshots = new WorkspaceSessionSnapshotStore(baseDir)
     this.dispatcher.onRequest('workspace.get', (params) => this.get(params))
     this.dispatcher.onRequest('workspace.patch', (params) => this.patch(params))
     this.dispatcher.onRequest('workspace.presence', (params) => this.presence(params))
   }
 
-  private snapshotPath(namespace: string): string {
-    return join(this.baseDir, `${namespace}.json`)
-  }
-
-  private read(namespace: string): RemoteWorkspaceSnapshot {
-    const path = this.snapshotPath(namespace)
-    if (!existsSync(path)) {
-      return {
-        namespace,
-        revision: 0,
-        updatedAt: 0,
-        schemaVersion: SNAPSHOT_SCHEMA_VERSION,
-        session: emptySession()
-      }
-    }
-
-    try {
-      const parsed = JSON.parse(readFileSync(path, 'utf-8')) as Partial<RemoteWorkspaceSnapshot>
-      return {
-        namespace,
-        revision:
-          typeof parsed.revision === 'number' && Number.isFinite(parsed.revision)
-            ? parsed.revision
-            : 0,
-        updatedAt:
-          typeof parsed.updatedAt === 'number' && Number.isFinite(parsed.updatedAt)
-            ? parsed.updatedAt
-            : 0,
-        schemaVersion:
-          typeof parsed.schemaVersion === 'number' && Number.isFinite(parsed.schemaVersion)
-            ? parsed.schemaVersion
-            : SNAPSHOT_SCHEMA_VERSION,
-        session:
-          parsed.session && typeof parsed.session === 'object' && !Array.isArray(parsed.session)
-            ? (parsed.session as Record<string, unknown>)
-            : emptySession()
-      }
-    } catch {
-      return {
-        namespace,
-        revision: 0,
-        updatedAt: 0,
-        schemaVersion: SNAPSHOT_SCHEMA_VERSION,
-        session: emptySession()
-      }
-    }
-  }
-
-  private write(snapshot: RemoteWorkspaceSnapshot): void {
-    const path = this.snapshotPath(snapshot.namespace)
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-    const tmpPath = `${path}.tmp`
-    writeFileSync(tmpPath, JSON.stringify(snapshot, null, 2), { mode: 0o600 })
-    renameSync(tmpPath, path)
+  /** Waits for in-flight snapshot writes; the relay awaits this before it exits. */
+  flush(): Promise<void> {
+    return this.snapshots.flush()
   }
 
   private async get(params: Record<string, unknown>): Promise<RemoteWorkspaceSnapshot> {
-    return this.read(sanitizeNamespace(params.namespace))
+    const namespace = sanitizeNamespace(params.namespace)
+    return this.snapshots.runSerialized(namespace, () => this.snapshots.read(namespace))
   }
 
   private async patch(params: Record<string, unknown>): Promise<PatchResult> {
     const namespace = sanitizeNamespace(params.namespace)
-    const current = this.read(namespace)
+    return this.snapshots.runSerialized(namespace, () => this.applyPatch(namespace, params))
+  }
+
+  private async applyPatch(
+    namespace: string,
+    params: Record<string, unknown>
+  ): Promise<PatchResult> {
+    const current = await this.snapshots.read(namespace)
     const baseRevision = Number(params.baseRevision)
     if (Number.isFinite(baseRevision) && baseRevision !== current.revision) {
       return { ok: false, reason: 'stale-revision', snapshot: current }
@@ -143,6 +88,10 @@ export class WorkspaceSessionHandler {
     ) {
       return { ok: false, reason: 'unavailable', message: 'Invalid workspace patch' }
     }
+    if (isDeepStrictEqual(patch.session, current.session)) {
+      // Why: a new revision for identical content makes every other client re-apply it.
+      return { ok: true, snapshot: current }
+    }
 
     const snapshot: RemoteWorkspaceSnapshot = {
       namespace,
@@ -151,7 +100,7 @@ export class WorkspaceSessionHandler {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       session: patch.session as Record<string, unknown>
     }
-    this.write(snapshot)
+    await this.snapshots.write(snapshot)
     publishWorkspaceSnapshotChange(
       this.dispatcher,
       {

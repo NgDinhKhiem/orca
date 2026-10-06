@@ -32,6 +32,7 @@ export class RelayRuntimeServices {
   readonly fsHandler: FsHandler
   readonly gitHandler: GitHandler
   readonly skillInstallHandler: SkillInstallHandler
+  private readonly workspaceSessionHandler: WorkspaceSessionHandler
   private readonly aiVaultService: ReturnType<typeof createRelayAiVaultService> | null
   private readonly sessionSearch: { dispose(): void } | null
   private readonly registeredHandlers: readonly unknown[]
@@ -78,7 +79,7 @@ export class RelayRuntimeServices {
     const externalAutomationsHandler = new ExternalAutomationsHandler(dispatcher)
     const portScanHandler = new PortScanHandler(dispatcher)
     const agentExecHandler = new AgentExecHandler(dispatcher)
-    const workspaceSessionHandler = new WorkspaceSessionHandler(dispatcher)
+    this.workspaceSessionHandler = new WorkspaceSessionHandler(dispatcher)
     const relayPlatform = parseUnameToRelayPlatform(process.platform, process.arch)
     const hostPlatform = relayPlatform ? getRemoteHostPlatform(relayPlatform) : undefined
     this.aiVaultService = hostPlatform ? createRelayAiVaultService(homedir(), hostPlatform) : null
@@ -104,7 +105,7 @@ export class RelayRuntimeServices {
       externalAutomationsHandler,
       portScanHandler,
       agentExecHandler,
-      workspaceSessionHandler,
+      this.workspaceSessionHandler,
       new AiVaultHandler(dispatcher, {
         hostPlatform,
         service: this.aiVaultService ?? undefined
@@ -120,6 +121,12 @@ export class RelayRuntimeServices {
   }
 
   async disposeOwnedProcesses(): Promise<void> {
+    // Shutdown awaits this before process.exit, so an accepted workspace patch finishes its rename.
+    await this.workspaceSessionHandler.flush().catch((error) => {
+      relayLogLine(
+        `[relay] Workspace snapshot flush failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+    })
     await this.skillInstallHandler.dispose().catch((error) => {
       relayLogLine(
         `[relay] Skill upload cleanup failed: ${error instanceof Error ? error.message : String(error)}`

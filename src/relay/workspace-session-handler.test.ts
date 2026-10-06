@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RelayDispatcher } from './dispatcher'
 import { WorkspaceSessionHandler } from './workspace-session-handler'
 import { encodeJsonRpcFrame, MessageType, type JsonRpcRequest } from './protocol'
@@ -19,7 +19,8 @@ async function sendRequest(
   dispatcher: RelayDispatcher,
   method: string,
   params: Record<string, unknown>,
-  id: number
+  id: number,
+  written: Buffer[]
 ): Promise<void> {
   const req: JsonRpcRequest = {
     jsonrpc: '2.0',
@@ -28,7 +29,12 @@ async function sendRequest(
     params
   }
   dispatcher.feed(encodeJsonRpcFrame(req, id, 0))
-  await Promise.resolve()
+  // Snapshot reads and writes are asynchronous file I/O, so wait for the reply frame itself.
+  await vi.waitFor(() => {
+    expect(decodeJsonFrames(written).some((frame) => (frame as { id?: number }).id === id)).toBe(
+      true
+    )
+  })
 }
 
 describe('WorkspaceSessionHandler', () => {
@@ -69,7 +75,8 @@ describe('WorkspaceSessionHandler', () => {
         clientId: 'client-a',
         patch: { kind: 'replace-session', session }
       },
-      1
+      1,
+      written
     )
 
     const frames = decodeJsonFrames(written)
@@ -93,7 +100,8 @@ describe('WorkspaceSessionHandler', () => {
         clientId: 'client-b',
         patch: { kind: 'replace-session', session: { ...session, activeTabId: 'tab-2' } }
       },
-      2
+      2,
+      written
     )
 
     const staleResponse = decodeJsonFrames(written).find(
@@ -113,7 +121,8 @@ describe('WorkspaceSessionHandler', () => {
         clientId: 'client-a',
         clientName: ' Laptop   A '
       },
-      1
+      1,
+      written
     )
     await sendRequest(
       dispatcher,
@@ -123,7 +132,8 @@ describe('WorkspaceSessionHandler', () => {
         clientId: 'client-b',
         clientName: 'Laptop B'
       },
-      2
+      2,
+      written
     )
 
     const response = decodeJsonFrames(written).find(
