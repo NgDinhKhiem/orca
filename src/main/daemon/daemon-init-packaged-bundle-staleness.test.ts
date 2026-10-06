@@ -147,6 +147,35 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(getMacDaemonTccAttributionHealthMock).not.toHaveBeenCalled()
   })
 
+  it('starts the bundle-staleness check while launch identity is still verifying', async () => {
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void> }>
+    isPackagedMock.mockReturnValue(true)
+    let staleCheckStartedBeforeIdentitySettled = false
+    let identityPending = true
+    // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: the preflight awaits this mock, so a promise of the same string is what production returns.
+    getDaemonLaunchIdentityMock.mockImplementationOnce((async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      identityPending = false
+      return 'match'
+    }) as never)
+    isDaemonStaleForCurrentBundleMock.mockImplementationOnce(() => {
+      staleCheckStartedBeforeIdentitySettled = identityPending
+      return false
+    })
+
+    await launcher('/fake/socket', '/fake/token')
+
+    // Sharing one in-flight pid verification requires both checks to be outstanding together.
+    expect(staleCheckStartedBeforeIdentitySettled).toBe(true)
+    expect(killStaleDaemonMock).not.toHaveBeenCalled()
+  })
+
   it('preserves a packaged daemon that predates the current app bundle when it owns live sessions', async () => {
     const mod = await importFresh()
     await mod.initDaemonPtyProvider()

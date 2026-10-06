@@ -90,15 +90,18 @@ export async function prepareDaemonReplacement(
       confirmedReplacement = (await cleanupDaemonForProtocol(runtimeDir, PROTOCOL_VERSION)).cleaned
     } else {
       // Why: a protocol-healthy daemon can outlive its launching app bundle (dev worktree rebuild, or packaged update replacing the app path).
-      const identity = await getDaemonLaunchIdentity(runtimeDir, socketPath, tokenPath, entryPath)
-      const stalePackagedBundle =
+      // Why concurrently: both verify the same pid record, and running them together lets
+      // them share one identity query (a PowerShell CIM spawn on Windows) instead of two.
+      const [identity, stalePackagedBundle] = await Promise.all([
+        getDaemonLaunchIdentity(runtimeDir, socketPath, tokenPath, entryPath),
         getAppEnvironment().isPackaged() &&
-        (await isDaemonStaleForCurrentBundle(
-          runtimeDir,
-          socketPath,
-          tokenPath,
-          getAppEnvironment().getVersion()
-        ))
+          isDaemonStaleForCurrentBundle(
+            runtimeDir,
+            socketPath,
+            tokenPath,
+            getAppEnvironment().getVersion()
+          )
+      ])
       if (identity === 'mismatch' || stalePackagedBundle) {
         // Why: replacing a healthy daemon kills its child PTYs; defer code freshness until no live sessions would be lost.
         const replacementLabel = stalePackagedBundle
