@@ -53,13 +53,18 @@ export function applyPtyBinding(
   }
   const tabs = session.tabsByWorktree?.[bindingWorktreeId]
   const tab = tabs?.find((t) => t.id === args.tabId)
-  if (tab) {
-    tab.ptyId = tabRowPtyIdAfterLeafBinding(
+  if (tab && tabs) {
+    // Copy-on-write below: rollback snapshots share every nested object this write leaves alone.
+    const ptyId = tabRowPtyIdAfterLeafBinding(
       tab,
       session.terminalLayoutsByTabId?.[args.tabId]?.ptyIdsByLeafId,
       args.leafId,
       args.ptyId
     )
+    session.tabsByWorktree = {
+      ...session.tabsByWorktree,
+      [bindingWorktreeId]: tabs.map((row) => (row === tab ? { ...row, ptyId } : row))
+    }
   } else {
     terminalMembershipChanged = true
     hostAdmittedTabCreated = args.hostAdmittedMembership === true
@@ -103,8 +108,10 @@ export function applyPtyBinding(
     advanceTopologyFence()
     return
   }
-  const layout = session.terminalLayoutsByTabId?.[args.tabId]
-  if (layout) {
+  const persistedLayout = session.terminalLayoutsByTabId?.[args.tabId]
+  if (persistedLayout) {
+    const layout = { ...persistedLayout }
+    session.terminalLayoutsByTabId = { ...session.terminalLayoutsByTabId, [args.tabId]: layout }
     if (!layout.root) {
       terminalMembershipChanged = true
       // Why: createTab can persist an empty layout before TerminalPane mounts; the sync binding still needs a durable root.

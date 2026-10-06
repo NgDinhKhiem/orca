@@ -1,5 +1,4 @@
-import { rollbackWorkspaceSessionAfterFailedAsyncWrite } from '../../../persistence/restoring-sessions/workspace-session-write-rollback'
-import { cloneWorkspaceSessionState } from '../../../persistence/restoring-sessions/session-owner-fields'
+import { stageWorkspaceSessionRollback } from '../../../persistence/restoring-sessions/workspace-session-write-snapshot'
 import { toSshExecutionHostId } from '../../../../shared/execution-host'
 import { makePaneKey, parsePaneKey } from '../../../../shared/stable-pane-id'
 import { UNVERIFIED_PROCESS_EXIT_CODE } from '../../../../shared/terminal-exit-cause'
@@ -142,7 +141,7 @@ export async function retirePersistedStablePaneOwner(
     if (current.ptyId !== owner.ptyId || current.incarnationId !== owner.persistedIncarnationId) {
       return { value: false, persist: false }
     }
-    const session = cloneWorkspaceSessionState(store.getWorkspaceSession(hostId))
+    const session = store.getWorkspaceSession(hostId)
     const retired = retireTerminalSurfaceFromPersistence(session, {
       worktreeId,
       parentTabId: owner.tabId,
@@ -154,12 +153,13 @@ export async function retirePersistedStablePaneOwner(
       return { value: false, persist: false }
     }
     store.setWorkspaceSession(retired, hostId)
-    const staged = cloneWorkspaceSessionState(store.getWorkspaceSession(hostId))
+    // Retirement and session admission are copy-on-write, so `session` is still the prior state.
+    const undo = stageWorkspaceSessionRollback(session, store.getWorkspaceSession(hostId))
     return {
       value: true,
       rollback: () => {
         const current = store.getWorkspaceSession(hostId)
-        const rolledBack = rollbackWorkspaceSessionAfterFailedAsyncWrite(session, staged, current)
+        const rolledBack = undo(current)
         if (rolledBack !== current) {
           store.setWorkspaceSession(rolledBack, hostId)
         }
