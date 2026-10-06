@@ -165,12 +165,16 @@ describe('browser RPC methods', () => {
       focus: true
     })
     expect(runtime.browserProfileDetectBrowsers).toHaveBeenCalled()
-    expect(runtime.browserProfileImportFromBrowser).toHaveBeenCalledWith({
-      profileId: 'profile-1',
-      browserFamily: 'chrome',
-      browserProfile: 'Default',
-      supportsPartitionSkippedCookies: true
-    })
+    expect(runtime.browserProfileImportFromBrowser).toHaveBeenCalledWith(
+      {
+        profileId: 'profile-1',
+        browserFamily: 'chrome',
+        browserProfile: 'Default',
+        supportsPartitionSkippedCookies: true
+      },
+      // Why undefined: a local-socket caller is not a paired client, so the host must confirm.
+      { pairedDeviceId: undefined }
+    )
   })
 
   it('routes browser screencast over the streaming dispatcher', async () => {
