@@ -40,6 +40,9 @@ export function createCallbacks(
 ): SshConnectionCallbacks {
   return {
     onStateChange: vi.fn(),
+    // Why: the fake host is unknown and the default policy is `ask`; most suites model a user who
+    // trusts it. Host-key tests override this to decline or to model a headless host.
+    onHostKeyConfirmRequest: vi.fn(async () => 'confirmed' as const),
     ...overrides
   }
 }

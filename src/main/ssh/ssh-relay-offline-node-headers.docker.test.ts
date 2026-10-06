@@ -134,7 +134,11 @@ function createConnection(fixture: TargetFixture): SshConnection {
     identityFile: fixture.identityFile,
     identitiesOnly: true
   }
-  return new SshConnection(target, { onStateChange: vi.fn() })
+  // Why confirmed: a freshly built test container has an unknown host key under the default `ask`.
+  return new SshConnection(target, {
+    onStateChange: vi.fn(),
+    onHostKeyConfirmRequest: async () => 'confirmed'
+  })
 }
 
 describe.skipIf(!RUN_REVIEW_ORACLE)(

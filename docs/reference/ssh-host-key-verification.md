@@ -259,6 +259,15 @@ silently with `accept-new` semantics and a passive notification naming the host 
 `mismatch` (same type) and `revoked` hard-fail. This is the entire MITM defence with zero prompts,
 zero startup storms and zero web hang.
 
+**Shipped since:** under `ask` (and when unset) an unknown host now yields `prompt`. The verifier
+settles it through ssh2's callback form and asks `onHostKeyConfirmRequest`, which shows a native
+dialog with host, port, key type and SHA256 fingerprint (`src/main/ipc/ssh-host-key-confirm-dialog.ts`,
+one at a time, 120s timeout). Confirmed → remembered (or only accepted when known_hosts was
+unreadable); declined, timed out, or no window (headless `orca serve`) → refused with a known_hosts
+remedy. `accept-new`, `no`/`off` and on-demand runtime targets stay silent. RPC fail-fast and
+`userInitiated` plumbing below are still open: a paired-web connect to an unknown host prompts on the
+host desktop and is refused if nobody answers.
+
 **Phase 2** — the TOFU dialog, `StrictHostKeyChecking` honouring, `ca-only`, `userInitiated`
 plumbing, and the D5 settings surface.
 

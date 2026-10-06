@@ -7,7 +7,7 @@
  */
 import type { KnownHostsOutcome } from './ssh-known-hosts'
 
-/** Phase 1 ships no dialog; `prompt` is reserved for Phase 2 and never produced today. */
+/** `prompt`: an unknown host under `ask`; the caller must get the user's yes or deny. */
 export type HostKeyAction = 'accept' | 'accept-and-remember' | 'reject' | 'prompt'
 
 export type HostKeyDecision = {
@@ -17,6 +17,8 @@ export type HostKeyDecision = {
   disagreeingSource?: 'orca-store' | 'known-hosts'
   /** Non-null only when the connection must fail; already user-facing. */
   reason?: string
+  /** `prompt` only: whether a confirmed key may be recorded as durable trust. */
+  rememberOnConfirm?: boolean
 }
 
 export type HostKeyDecisionInput = {
@@ -294,14 +296,18 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
       )
     }
   }
-  if (knownHostsUnreadable) {
-    // Connect as ssh does, but do not write a record from evidence we could not read.
-    return { action: 'accept', outcome: unknownOutcome }
-  }
   if (LAX_VALUES.has(strict)) {
     // OpenSSH accepts here but does not write. Persisting would silently convert a deliberately
     // lax setting into a permanent trust record.
     return { action: 'accept', outcome: unknownOutcome }
   }
-  return { action: 'accept-and-remember', outcome: unknownOutcome }
+  if (strict === 'accept-new') {
+    // Connect as ssh does, but do not write a record from evidence we could not read.
+    return {
+      action: knownHostsUnreadable ? 'accept' : 'accept-and-remember',
+      outcome: unknownOutcome
+    }
+  }
+  // `ask`, unset, or unrecognised: OpenSSH shows the fingerprint and waits for an explicit yes.
+  return { action: 'prompt', outcome: unknownOutcome, rememberOnConfirm: !knownHostsUnreadable }
 }

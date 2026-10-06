@@ -105,9 +105,9 @@ describe('the ssh2 host key verifier', () => {
   })
 
   describe('remembering', () => {
-    it('records a first-contact key', () => {
+    it('records a first-contact key under accept-new', () => {
       const rememberHostKey = vi.fn()
-      run({ rememberHostKey })
+      run({ rememberHostKey, strictHostKeyChecking: 'accept-new' })
       expect(rememberHostKey).toHaveBeenCalledWith(
         expect.objectContaining({
           host: 'example.com',
@@ -132,7 +132,7 @@ describe('the ssh2 host key verifier', () => {
 
   it('reports every decision for audit', () => {
     const onDecision = vi.fn()
-    run({ onDecision })
+    run({ onDecision, strictHostKeyChecking: 'accept-new' })
     expect(onDecision).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'unknown', keyType: 'ssh-ed25519' })
     )
@@ -203,6 +203,137 @@ describe('the ssh2 host key verifier', () => {
 
 // We now READ ssh2's list instead of copying it, which removes the drift class entirely — but the
 // fallback copy is still load-bearing if the deep path ever moves, so it is the thing worth pinning.
+describe('confirming an unknown host under StrictHostKeyChecking=ask', () => {
+  /** Runs the verifier and waits for the asynchronous confirmation to settle. */
+  async function runConfirm(
+    overrides: Partial<HostKeyVerifierDeps>
+  ): Promise<{ accepted: boolean | undefined; returned: unknown }> {
+    let accepted: boolean | undefined
+    const settled = new Promise<void>((resolve) => {
+      const returned = createHostKeyVerifier(deps(overrides))(blob(ED_A), (ok) => {
+        accepted = ok
+        resolve()
+      })
+      expect(returned).toBeUndefined()
+    })
+    await settled
+    return { accepted, returned: undefined }
+  }
+
+  it('shows the host and SHA256 fingerprint and records the key once confirmed', async () => {
+    const rememberHostKey = vi.fn()
+    const confirmUnknownHostKey = vi.fn(async () => 'confirmed' as const)
+    const onDecision = vi.fn()
+
+    const { accepted } = await runConfirm({ confirmUnknownHostKey, rememberHostKey, onDecision })
+
+    expect(confirmUnknownHostKey).toHaveBeenCalledWith({
+      displayHost: 'example.com',
+      port: 22,
+      keyType: 'ssh-ed25519',
+      fingerprint: hostKeyFingerprintOf(blob(ED_A))
+    })
+    expect(hostKeyFingerprintOf(blob(ED_A))).toMatch(/^SHA256:/)
+    expect(accepted).toBe(true)
+    expect(rememberHostKey).toHaveBeenCalledWith(
+      expect.objectContaining({ host: 'example.com', keyType: 'ssh-ed25519' })
+    )
+    expect(onDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'accept-and-remember', outcome: 'unknown' })
+    )
+  })
+
+  it('denies and records nothing when the user declines', async () => {
+    const rememberHostKey = vi.fn()
+    const onDecision = vi.fn()
+
+    const { accepted } = await runConfirm({
+      confirmUnknownHostKey: async () => 'declined',
+      rememberHostKey,
+      onDecision
+    })
+
+    expect(accepted).toBe(false)
+    expect(rememberHostKey).not.toHaveBeenCalled()
+    expect(onDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'reject',
+        reason: expect.stringContaining('was not confirmed')
+      })
+    )
+  })
+
+  it('fails closed with a known_hosts remedy when no prompt channel exists', async () => {
+    const rememberHostKey = vi.fn()
+    const onDecision = vi.fn()
+
+    const { accepted } = await runConfirm({ rememberHostKey, onDecision })
+
+    expect(accepted).toBe(false)
+    expect(rememberHostKey).not.toHaveBeenCalled()
+    expect(onDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'reject', reason: expect.stringContaining('known_hosts') })
+    )
+  })
+
+  it('fails closed with a known_hosts remedy when no window can show the prompt', async () => {
+    const onDecision = vi.fn()
+    const { accepted } = await runConfirm({
+      confirmUnknownHostKey: async () => 'unavailable',
+      onDecision
+    })
+    expect(accepted).toBe(false)
+    expect(onDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'reject', reason: expect.stringContaining('known_hosts') })
+    )
+  })
+
+  it('denies when the confirmation itself fails', async () => {
+    const { accepted } = await runConfirm({
+      confirmUnknownHostKey: async () => {
+        throw new Error('dialog crashed')
+      }
+    })
+    expect(accepted).toBe(false)
+  })
+
+  it('denies a confirmation that arrives after the attempt was superseded', async () => {
+    let current = true
+    const rememberHostKey = vi.fn()
+    const { accepted } = await runConfirm({
+      isCurrentAttempt: () => current,
+      confirmUnknownHostKey: async () => {
+        current = false
+        return 'confirmed'
+      },
+      rememberHostKey
+    })
+    expect(accepted).toBe(false)
+    expect(rememberHostKey).not.toHaveBeenCalled()
+  })
+
+  it('connects but records nothing when known_hosts could not be read', async () => {
+    const rememberHostKey = vi.fn()
+    const { accepted } = await runConfirm({
+      knownHostsUnreadable: true,
+      confirmUnknownHostKey: async () => 'confirmed',
+      rememberHostKey
+    })
+    expect(accepted).toBe(true)
+    expect(rememberHostKey).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['accept-new', { strictHostKeyChecking: 'accept-new' }],
+    ['no', { strictHostKeyChecking: 'no' }],
+    ['an ephemeral runtime target', { isEphemeralRuntimeTarget: true }]
+  ])('never prompts under %s', (_label, overrides) => {
+    const confirmUnknownHostKey = vi.fn(async () => 'declined' as const)
+    expect(run({ ...overrides, confirmUnknownHostKey }).accepted).toBe(true)
+    expect(confirmUnknownHostKey).not.toHaveBeenCalled()
+  })
+})
+
 describe('the ssh2 default algorithm list', () => {
   const ssh2Constants = require('ssh2/lib/protocol/constants.js') as {
     DEFAULT_SERVER_HOST_KEY: string[]

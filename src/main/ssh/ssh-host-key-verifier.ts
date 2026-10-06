@@ -17,6 +17,17 @@ import {
 } from './ssh-known-hosts'
 import { decideHostKey, type HostKeyDecision } from './ssh-host-key-decision'
 
+export type HostKeyConfirmRequest = {
+  displayHost: string
+  port: number
+  keyType: string
+  /** `SHA256:<base64>`, as `ssh` prints it. */
+  fingerprint: string
+}
+
+/** `unavailable`: nothing can show a prompt (headless `orca serve`, no window). */
+export type HostKeyConfirmation = 'confirmed' | 'declined' | 'unavailable'
+
 export type TrustedHostKeyLookup = (query: {
   host: string
   port: number
@@ -46,6 +57,11 @@ export type HostKeyVerifierDeps = {
     key: Buffer
     fingerprint: string
   }) => void
+  /**
+   * Asks the user about an unknown host under StrictHostKeyChecking=ask. Absent means no prompt
+   * channel exists, which denies.
+   */
+  confirmUnknownHostKey?: (request: HostKeyConfirmRequest) => Promise<HostKeyConfirmation>
   /** Called on every decision so accepts and rejections are auditable. */
   onDecision?: (decision: HostKeyDecision & { fingerprint: string; keyType: string }) => void
   /**
@@ -194,9 +210,72 @@ export function createHostKeyVerifier(
     return undefined
   }
 
+  const isCurrent = (): boolean => !deps.isCurrentAttempt || deps.isCurrentAttempt()
+
+  /** Settles a `prompt` decision through the callback form; the verifier itself still returns now. */
+  const confirmThenVerify = (
+    key: Buffer,
+    keyType: string,
+    fingerprint: string,
+    decision: HostKeyDecision,
+    verifyOnce: VerifyCallback
+  ): void => {
+    let settled = false
+    const verify: VerifyCallback = (accept) => {
+      if (!settled) {
+        settled = true
+        verifyOnce(accept)
+      }
+    }
+    const unknownHostRemedy = `To trust it without a prompt, add its key to your known_hosts file (verify the fingerprint ${fingerprint} out of band first), or connect once with ssh.`
+    const confirm = deps.confirmUnknownHostKey
+    if (!confirm) {
+      deny(
+        verify,
+        decision.outcome,
+        `The host is unknown and Orca cannot ask you to confirm it here. ${unknownHostRemedy}`
+      )
+      return
+    }
+    void Promise.resolve()
+      .then(() => confirm({ displayHost: deps.displayHost, port: deps.port, keyType, fingerprint }))
+      .catch((): HostKeyConfirmation => 'declined')
+      .then((answer) => {
+        if (!isCurrent()) {
+          // Same as a superseded attempt above: nobody is waiting, so neither record nor report.
+          verify(false)
+          return
+        }
+        if (answer !== 'confirmed') {
+          deny(
+            verify,
+            decision.outcome,
+            answer === 'unavailable'
+              ? `The host is unknown and no Orca window is open to confirm it. ${unknownHostRemedy}`
+              : `The host key (${fingerprint}) was not confirmed.`
+          )
+          return
+        }
+        const remember = decision.rememberOnConfirm !== false
+        deps.onDecision?.({
+          action: remember ? 'accept-and-remember' : 'accept',
+          outcome: decision.outcome,
+          fingerprint,
+          keyType
+        })
+        if (remember) {
+          deps.rememberHostKey({ host: deps.host, port: deps.port, keyType, key, fingerprint })
+        }
+        verify(true)
+      })
+      .catch(() => {
+        verify(false)
+      })
+  }
+
   return (key, verify) => {
     try {
-      if (deps.isCurrentAttempt && !deps.isCurrentAttempt()) {
+      if (!isCurrent()) {
         // No decision is reported: nobody is waiting on this attempt, and reporting would let a
         // superseded verifier overwrite the live attempt's outcome.
         verify(false)
@@ -230,6 +309,12 @@ export function createHostKeyVerifier(
         hostKeyStoreFile: deps.hostKeyStoreFile
       })
 
+      if (decision.action === 'prompt') {
+        // Why not reported yet: onDecision adopts the fingerprint, which must wait for the user's yes.
+        confirmThenVerify(key, keyType, fingerprint, decision, verify)
+        return undefined
+      }
+
       deps.onDecision?.({ ...decision, fingerprint, keyType })
 
       if (decision.action === 'accept-and-remember') {
@@ -241,8 +326,6 @@ export function createHostKeyVerifier(
           fingerprint
         })
       }
-      // `prompt` is unreachable in this phase; treating it as a denial keeps the fail-closed
-      // property if it ever becomes reachable before the dialog exists.
       verify(decision.action === 'accept' || decision.action === 'accept-and-remember')
     } catch {
       // ssh2 may not catch a throw from inside the verifier, which would leave the handshake
