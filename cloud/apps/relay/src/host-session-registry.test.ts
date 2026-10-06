@@ -18,7 +18,13 @@ import {
   type ControlRenewalOutcome,
   type ControlRenewalRequest
 } from './control-renewal-statement.js'
-import { HostSessionRegistry, type HostSession } from './host-session-registry.js'
+import { RelayStoreError } from './credential-store.js'
+import {
+  CONTROL_COMMANDS_PER_ACCOUNT_PER_MINUTE,
+  HostSessionRegistry,
+  MAX_IN_FLIGHT_CONTROL_TASKS,
+  type HostSession
+} from './host-session-registry.js'
 import { relayHostLogDigest } from './relay-host-log-digest.js'
 import type { RelayRuntimeObserver } from './relay-observability.js'
 import {
@@ -1970,5 +1976,88 @@ describe('paced drain', () => {
     const sendsAfterEmergency = sockets.map((socket) => socket.send.mock.calls.length)
     await vi.advanceTimersByTimeAsync(40_000)
     expect(sockets.map((socket) => socket.send.mock.calls.length)).toEqual(sendsAfterEmergency)
+  })
+})
+
+describe('control command admission', () => {
+  const revokeMessage = (index: number): Buffer =>
+    Buffer.from(
+      JSON.stringify({ type: 'device-revoke', reqId: `req-${index}`, relayDeviceId: 'device-1' })
+    )
+
+  async function activeControl(store: Partial<RelayCredentialStore>): Promise<FakeSocket> {
+    const activateControl = vi
+      .fn<RelayAssignmentStore['activateControl']>()
+      .mockResolvedValue('control:production-gce-c3:1')
+    const { activate } = createRegistry(activateControl, store)
+    const socket = new FakeSocket()
+    await activate(socket as unknown as WebSocket, identity, null, 1, false, 1)
+    // Drops the activation ack so each test counts only command replies.
+    socket.send.mockClear()
+    return socket
+  }
+
+  it('closes a control that floods commands past its in-flight cap', async () => {
+    const stalled = deferred<void>()
+    const revoke = vi.fn(async () => await stalled.promise)
+    const consumeRate = vi.fn(async () => undefined)
+    const socket = await activeControl({ revoke, consumeRate })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      for (let index = 0; index < 64; index++) {
+        if (socket.readyState !== socket.OPEN) break
+        socket.emit('message', revokeMessage(index), false)
+      }
+      await vi.waitFor(() =>
+        expect(socket.close).toHaveBeenCalledWith(1008, 'control command limit exceeded')
+      )
+      expect(revoke.mock.calls.length).toBeLessThanOrEqual(MAX_IN_FLIGHT_CONTROL_TASKS)
+      stalled.resolve()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('admits more commands once earlier ones settle', async () => {
+    const revoke = vi.fn(async () => undefined)
+    const consumeRate = vi.fn(async () => undefined)
+    const socket = await activeControl({ revoke, consumeRate })
+
+    for (let wave = 0; wave < 3; wave++) {
+      for (let index = 0; index < MAX_IN_FLIGHT_CONTROL_TASKS; index++) {
+        socket.emit('message', revokeMessage(wave * 100 + index), false)
+      }
+      await vi.waitFor(() =>
+        expect(revoke).toHaveBeenCalledTimes((wave + 1) * MAX_IN_FLIGHT_CONTROL_TASKS)
+      )
+      await vi.waitFor(() =>
+        expect(socket.send).toHaveBeenCalledTimes((wave + 1) * MAX_IN_FLIGHT_CONTROL_TASKS)
+      )
+    }
+    expect(socket.close).not.toHaveBeenCalled()
+  })
+
+  it('charges each credential command to the account before touching the store', async () => {
+    const revoke = vi.fn(async () => undefined)
+    const consumeRate = vi.fn(async () => {
+      throw new RelayStoreError('rate_limit_exceeded')
+    })
+    const socket = await activeControl({ revoke, consumeRate })
+
+    socket.emit('message', revokeMessage(1), false)
+
+    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled())
+    expect(consumeRate).toHaveBeenCalledWith({
+      scopeKey: `account:${identity.sub}`,
+      kind: 'control-command',
+      limit: CONTROL_COMMANDS_PER_ACCOUNT_PER_MINUTE,
+      windowMs: 60_000
+    })
+    expect(revoke).not.toHaveBeenCalled()
+    expect(JSON.parse(String(socket.send.mock.calls[0]?.[0]))).toEqual({
+      type: 'control-error',
+      reqId: 'req-1',
+      code: 'rate_limit_exceeded'
+    })
   })
 })

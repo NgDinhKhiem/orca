@@ -156,6 +156,18 @@ function payload(raw: RawData, expectedType: string): unknown {
   }
 }
 
+// Every phone connection can owe one confirmation at once, plus user-driven commands.
+export const MAX_IN_FLIGHT_CONTROL_TASKS = RELAY_PROTOCOL_LIMITS.maxConnectionsPerHost * 2
+export const CONTROL_COMMANDS_PER_ACCOUNT_PER_MINUTE = 120
+const CONTROL_COMMAND_RATE_WINDOW_MS = 60_000
+const RATE_LIMITED_CONTROL_COMMANDS: ReadonlySet<string> = new Set([
+  'device-credential-install',
+  'device-credential-install-status',
+  'device-resume-confirm',
+  'device-revoke'
+])
+const POLICY_VIOLATION_CLOSE_CODE = 1008
+
 function send(socket: WebSocket, type: string, message: object): void {
   socket.send(JSON.stringify({ type, ...message }))
 }
@@ -1321,6 +1333,27 @@ export class HostSessionRegistry {
             : ` error=${JSON.stringify(printableCloseReason(socketError))}`)
       )
     })
+    // Why: each command is an async database task; uncapped, one authenticated host
+    // could queue unbounded work with a stream of up-to-1MiB frames.
+    let inFlightControlTasks = 0
+    const guardControlTask = (task: () => Promise<void>, context: string): void => {
+      if (inFlightControlTasks >= MAX_IN_FLIGHT_CONTROL_TASKS) {
+        socket.close(POLICY_VIOLATION_CLOSE_CODE, 'control command limit exceeded')
+        return
+      }
+      inFlightControlTasks++
+      this.guardSessionTask(
+        async () => {
+          try {
+            await task()
+          } finally {
+            inFlightControlTasks--
+          }
+        },
+        socket,
+        context
+      )
+    }
     socket.on('message', (raw, isBinary) => {
       if (isBinary || (session.state !== 'active' && session.state !== 'drain-only')) return
       try {
@@ -1333,12 +1366,11 @@ export class HostSessionRegistry {
         if (parsed.type === 'auth-refresh') {
           // Close the socket the message arrived on: after a rebind,
           // session.socket already points at the successor.
-          this.guardSessionTask(() => this.acceptRefresh(session, raw), socket, 'auth refresh')
+          guardControlTask(() => this.acceptRefresh(session, raw), 'auth refresh')
           return
         }
-        this.guardSessionTask(
+        guardControlTask(
           () => this.acceptControlCommand(session, parsed.type, raw),
-          socket,
           'control command'
         )
       } catch {
@@ -1647,6 +1679,15 @@ export class HostSessionRegistry {
     if (typeof type !== 'string' || !session.socket) return
     try {
       const identity = { userId: session.identity.sub, relayHostId: session.relayHostId }
+      // Charged before the work and in its own transaction, so failing commands still count.
+      if (RATE_LIMITED_CONTROL_COMMANDS.has(type)) {
+        await this.store.consumeRate({
+          scopeKey: `account:${identity.userId}`,
+          kind: 'control-command',
+          limit: CONTROL_COMMANDS_PER_ACCOUNT_PER_MINUTE,
+          windowMs: CONTROL_COMMAND_RATE_WINDOW_MS
+        })
+      }
       if (type === 'invite-create') {
         if (session.state !== 'active') throw new Error('authorization_expired')
         const request = InviteCreateSchema.parse(payload(raw, type))
