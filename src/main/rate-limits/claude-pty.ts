@@ -20,6 +20,7 @@ import {
   stripTerminalControlSequences
 } from './claude-pty-usage-parser'
 import { quoteHiddenRateLimitShellValue } from './hidden-rate-limit-shell'
+import { createClaudePtyStopDetectionBuffer } from './claude-pty-stream-stripper'
 import { CLAUDE_USAGE_STOP_SUBSTRINGS } from './claude-pty-stop-markers'
 
 const PTY_TIMEOUT_MS = 25_000
@@ -55,6 +56,8 @@ export async function fetchViaPty(options?: {
 
   return new Promise<ProviderRateLimits>((resolve) => {
     let output = ''
+    // Why: stop detection strips each chunk once instead of re-stripping all of `output`.
+    const stopDetection = createClaudePtyStopDetectionBuffer(MAX_OUTPUT_LENGTH)
     let resolved = false
     let sentUsage = false
     let stopDetected = false
@@ -277,6 +280,7 @@ export async function fetchViaPty(options?: {
         output = output.slice(-MAX_OUTPUT_LENGTH)
       }
 
+      stopDetection.push(data)
       const cleanChunk = stripTerminalControlSequences(data)
 
       // Why: the Claude CLI may prompt for first-run setup (trust files,
@@ -295,7 +299,7 @@ export async function fetchViaPty(options?: {
 
       // Check if we've hit a stop substring indicating the panel rendered
       if (sentUsage && !stopDetected) {
-        const clean = stripTerminalControlSequences(output)
+        const clean = stopDetection.takeUnsearched()
         if (!claude21UsageDetected && isClaude21UsagePanel(clean)) {
           claude21UsageDetected = true
           if (enterInterval) {
