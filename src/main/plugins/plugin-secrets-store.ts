@@ -1,11 +1,14 @@
-import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { safeStorage } from 'electron'
-import { isUnreadableError, writeSecureFile } from '../../shared/secure-file'
 import {
   PLUGIN_STORAGE_KEY_LIMIT,
   PLUGIN_STORAGE_TOTAL_MAX_BYTES
 } from '../../shared/plugins/plugin-host-api'
+import {
+  pluginDataRecordFiles,
+  type PluginDataRecordFile,
+  type PluginDataRecordFormat
+} from './plugin-data-record-file'
 import { pluginDataDir } from './plugin-storage-store'
 
 /**
@@ -16,16 +19,34 @@ import { pluginDataDir } from './plugin-storage-store'
  * secrets are API-token grade.
  */
 
-type PersistedSecretsFile = {
-  version: 1
-  format: 'electron-safe-storage-v1'
-  /** key → base64 ciphertext of the secret value. */
-  ciphertexts: Record<string, string>
+const SECRETS_FORMAT = 'electron-safe-storage-v1'
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** `{ version: 1, format, ciphertexts: { key: base64 ciphertext } }`, written compactly. */
+const SECRETS_RECORD_FORMAT: PluginDataRecordFormat = {
+  prefix: `{"version":1,"format":"${SECRETS_FORMAT}","ciphertexts":{`,
+  suffix: '}}',
+  entriesOf: (parsed) =>
+    isRecord(parsed) &&
+    parsed.version === 1 &&
+    parsed.format === SECRETS_FORMAT &&
+    isRecord(parsed.ciphertexts)
+      ? parsed.ciphertexts
+      : null
 }
 
 export type PluginSecretsResult<T> = { ok: true; value: T } | { ok: false; error: string }
 
 const UNREADABLE_VAULT_ERROR = 'secret vault exists but could not be read; refusing to overwrite it'
+
+const SECRETS_WRITE_ERRORS = {
+  unreadable: UNREADABLE_VAULT_ERROR,
+  keyLimit: `secret vault exceeds the ${PLUGIN_STORAGE_KEY_LIMIT}-key limit`,
+  sizeLimit: `secret vault exceeds ${PLUGIN_STORAGE_TOTAL_MAX_BYTES} bytes`
+}
 
 export class PluginSecretsStore {
   private readonly filePath: string
@@ -34,49 +55,19 @@ export class PluginSecretsStore {
     this.filePath = join(pluginDataDir(pluginsDataDir, qualifiedKey), 'secrets.json.enc')
   }
 
-  /** `null` means the vault exists and this process may not read it — which is never "empty". */
-  private read(): PersistedSecretsFile | null {
-    const empty: PersistedSecretsFile = {
-      version: 1,
-      format: 'electron-safe-storage-v1',
-      ciphertexts: {}
-    }
-    try {
-      if (!existsSync(this.filePath)) {
-        return empty
-      }
-      if (statSync(this.filePath).size > PLUGIN_STORAGE_TOTAL_MAX_BYTES) {
-        return empty
-      }
-      const parsed = JSON.parse(readFileSync(this.filePath, 'utf8')) as PersistedSecretsFile
-      if (
-        parsed &&
-        parsed.version === 1 &&
-        parsed.format === 'electron-safe-storage-v1' &&
-        parsed.ciphertexts &&
-        typeof parsed.ciphertexts === 'object' &&
-        !Array.isArray(parsed.ciphertexts)
-      ) {
-        return parsed
-      }
-    } catch (error) {
-      // Being denied the read is not evidence the vault is corrupt. Returning `empty` here would
-      // make the next set() write a vault containing only that one key, silently dropping every
-      // secret the file still holds — and the write would succeed.
-      if (isUnreadableError(error)) {
-        return null
-      }
-      // Corrupt vaults read as empty; set() rewrites a valid file.
-    }
-    return empty
+  // Why written through, not debounced: secret writes are rare user actions, and losing one to a
+  // crash inside the debounce window would silently drop a credential.
+  private file(): PluginDataRecordFile {
+    return pluginDataRecordFiles.get(this.filePath, SECRETS_RECORD_FORMAT, 'immediate')
   }
 
   get(key: string): PluginSecretsResult<string | null> {
-    const file = this.read()
-    if (!file) {
+    const entries = this.file().read()
+    if (!entries) {
       return { ok: false, error: UNREADABLE_VAULT_ERROR }
     }
-    const ciphertext = file.ciphertexts[key]
+    const stored = entries.get(key)
+    const ciphertext: unknown = stored === undefined ? undefined : JSON.parse(stored)
     if (typeof ciphertext !== 'string') {
       return { ok: true, value: null }
     }
@@ -94,34 +85,16 @@ export class PluginSecretsStore {
     if (!safeStorage.isEncryptionAvailable()) {
       return { ok: false, error: 'OS-backed encryption is unavailable; secret not stored' }
     }
-    const file = this.read()
-    if (!file) {
+    const file = this.file()
+    if (!file.read()) {
       return { ok: false, error: UNREADABLE_VAULT_ERROR }
     }
-    if (
-      !Object.hasOwn(file.ciphertexts, key) &&
-      Object.keys(file.ciphertexts).length >= PLUGIN_STORAGE_KEY_LIMIT
-    ) {
-      return { ok: false, error: `secret vault exceeds the ${PLUGIN_STORAGE_KEY_LIMIT}-key limit` }
-    }
-    file.ciphertexts[key] = safeStorage.encryptString(value).toString('base64')
-    const nextFile = JSON.stringify(file, null, 2)
-    if (Buffer.byteLength(nextFile, 'utf8') > PLUGIN_STORAGE_TOTAL_MAX_BYTES) {
-      return { ok: false, error: `secret vault exceeds ${PLUGIN_STORAGE_TOTAL_MAX_BYTES} bytes` }
-    }
-    writeSecureFile(this.filePath, nextFile)
-    return { ok: true, value: true }
+    const ciphertext = safeStorage.encryptString(value).toString('base64')
+    const written = file.set(key, JSON.stringify(ciphertext), SECRETS_WRITE_ERRORS)
+    return written.ok ? { ok: true, value: true } : written
   }
 
   delete(key: string): void {
-    const file = this.read()
-    if (!file) {
-      // Rewriting what we could not read would drop every other secret in the vault.
-      return
-    }
-    if (Object.hasOwn(file.ciphertexts, key)) {
-      delete file.ciphertexts[key]
-      writeSecureFile(this.filePath, JSON.stringify(file, null, 2))
-    }
+    this.file().delete(key)
   }
 }
