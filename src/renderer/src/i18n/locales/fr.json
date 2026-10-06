@@ -15288,6 +15288,7 @@
           "kernelStartFailed": "Le kernel n'a pas pu démarrer.",
           "noPython": "Python est introuvable sur cet ordinateur. Installez-le depuis [python.org](https://www.python.org/downloads/), puis réexécutez la cellule.",
           "kernelDied": "Le kernel est mort.",
+          "outputLinesTruncated": "{{lines}} lignes précédentes tronquées",
           "localOnly": "Les cellules du notebook ne peuvent s'exécuter que pour des fichiers sur cet ordinateur.",
           "pythonOnly": "Seuls les notebooks Python peuvent s'exécuter dans Orca.",
           "commandCopied": "Commande copiée.",
