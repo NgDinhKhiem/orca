@@ -139,6 +139,9 @@ export const AI_VAULT_AGENT_SOURCES: AiVaultAgentSourceTable = {
     rootDirs: (options, wslHomeDirs) =>
       uniqueCodexSessionsDirs([
         options.codexSessionsDir ?? CODEX_SESSIONS_DIR,
+        // Why: Codex's archive moves rollouts out of sessions/ into this flat
+        // sibling dir; they stay the user's history, so list and index them too.
+        join(dirname(options.codexSessionsDir ?? CODEX_SESSIONS_DIR), 'archived_sessions'),
         ...wslHomeDirs.map((homeDir) => join(homeDir, '.codex', 'sessions')),
         // Why: Orca-launched WSL Codex sessions use an Orca-owned CODEX_HOME,
         // not the user's default ~/.codex history root.

@@ -114,6 +114,54 @@ describe('scanAiVaultSessions codex dual-root dedup', () => {
     })
   })
 
+  it('lists archived rollouts from the sibling archived_sessions dir', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-ai-vault-codex-archived-'))
+    tempRoots.push(root)
+    const roots = isolatedScanRoots(root)
+    const realHome = join(root, 'real-codex-home')
+    const realSessionsDir = join(realHome, 'sessions')
+    const archivedDir = join(realHome, 'archived_sessions')
+    const archivedPath = join(
+      archivedDir,
+      'rollout-2026-07-03T10-00-00-039f0000-1111-7222-8333-666666666666.jsonl'
+    )
+    await mkdir(realSessionsDir, { recursive: true })
+    await mkdir(archivedDir, { recursive: true })
+    await writeFile(
+      archivedPath,
+      jsonLines([
+        {
+          timestamp: '2026-07-03T10:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: '039f0000-1111-7222-8333-666666666666', cwd: '/repo/app' }
+        },
+        {
+          timestamp: '2026-07-03T10:00:01.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'text', text: 'Archived session' }]
+          }
+        }
+      ])
+    )
+
+    const result = await scanAiVaultSessions({
+      ...roots,
+      codexSessionsDir: realSessionsDir,
+      defaultCodexHomeDir: realHome,
+      platform: 'darwin'
+    })
+
+    expect(result.issues).toEqual([])
+    expect(
+      result.sessions.find(
+        (session) => session.sessionId === '039f0000-1111-7222-8333-666666666666'
+      )
+    ).toMatchObject({ codexHome: null, filePath: archivedPath })
+  })
+
   it('keeps different same-name rollouts from separate roots', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-ai-vault-codex-collision-'))
     tempRoots.push(root)
